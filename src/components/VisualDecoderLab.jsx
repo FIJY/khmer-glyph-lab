@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { buildEduUnits, mapEduUnitsToGlyphs } from '../lib/eduUnits.js';
 
 const DEBUG = Boolean(globalThis.window?.__EDU_DEBUG__);
+const SCALE = 0.06;
 
 export default function VisualDecoderLab() {
   const [text, setText] = useState('កៅ');
@@ -42,14 +43,12 @@ export default function VisualDecoderLab() {
   }
 
   useEffect(() => {
-    if (didAutoload) {
-      return;
-    }
+    if (didAutoload) return;
     setDidAutoload(true);
     handleShape();
   }, [didAutoload]);
 
-  const width = Math.max(500, glyphs.reduce((acc, glyph) => Math.max(acc, glyph.x + glyph.advance + 40), 500));
+  const width = Math.max(560, glyphs.reduce((acc, glyph) => Math.max(acc, glyph.x * SCALE + glyph.advance * SCALE + 140), 560));
 
   return (
     <section>
@@ -60,29 +59,56 @@ export default function VisualDecoderLab() {
 
       {error ? <p style={{ color: 'crimson' }}>{error}</p> : null}
 
-      <svg width={width} height={260} viewBox={`0 -120 ${width} 260`} style={{ border: '1px solid #ddd', background: '#fff' }}>
-        <line x1="0" y1="140" x2={width} y2="140" stroke="#e5e7eb" strokeDasharray="4 4" />
+      <svg width={width} height={320} viewBox={`0 0 ${width} 320`} style={{ border: '1px solid #ddd', background: '#fff' }}>
+        <line x1="0" y1="200" x2={width} y2="200" stroke="#e5e7eb" strokeDasharray="4 4" />
+        <text x="12" y="195" fill="#9ca3af" fontSize="12">baseline</text>
+
         {glyphs.map((glyph) => {
           const isSelected = glyph.id === selectedGlyphId;
+          const boxW = Math.max((glyph.bb.x2 - glyph.bb.x1) * SCALE, 10);
+          const boxH = Math.max((glyph.bb.y2 - glyph.bb.y1) * SCALE, 10);
+
           return (
             <g
               key={glyph.id}
-              transform={`translate(${glyph.x + 30}, 140)`}
+              transform={`translate(${glyph.x * SCALE + 40}, 200)`}
               onClick={() => setSelectedGlyphId(glyph.id)}
               style={{ cursor: 'pointer' }}
             >
-              <path d={glyph.d} fill={isSelected ? '#1d4ed8' : '#111'} transform="scale(0.03 -0.03)" />
               <rect
-                x={glyph.bb.x1 * 0.03}
-                y={-glyph.bb.y2 * 0.03}
-                width={Math.max((glyph.bb.x2 - glyph.bb.x1) * 0.03, 1)}
-                height={Math.max((glyph.bb.y2 - glyph.bb.y1) * 0.03, 1)}
-                fill="none"
-                stroke={isSelected ? '#1d4ed8' : 'transparent'}
+                x={glyph.bb.x1 * SCALE}
+                y={glyph.bb.y1 * SCALE}
+                width={boxW}
+                height={boxH}
+                fill={isSelected ? 'rgba(37,99,235,0.10)' : 'rgba(239,68,68,0.06)'}
+                stroke={isSelected ? '#1d4ed8' : '#ef4444'}
+                strokeDasharray={isSelected ? '0' : '3 3'}
               />
+
+              {glyph.d ? (
+                <path
+                  d={glyph.d}
+                  fill={isSelected ? '#1d4ed8' : '#111'}
+                  stroke={isSelected ? '#1d4ed8' : '#111'}
+                  strokeWidth={6}
+                  transform={`scale(${SCALE} ${SCALE})`}
+                />
+              ) : (
+                <circle cx={boxW / 2} cy={boxH / 2} r="6" fill="#ef4444" />
+              )}
+
+              <text x={glyph.bb.x1 * SCALE} y={glyph.bb.y1 * SCALE - 6} fontSize="11" fill="#6b7280">
+                #{glyph.id} cl:{glyph.cluster}
+              </text>
+              <text x={glyph.bb.x1 * SCALE} y={glyph.bb.y2 * SCALE + 14} fontSize="12" fill="#374151">
+                {glyph.clusterText}
+              </text>
+
+              <title>{`glyph ${glyph.id}, hb=${glyph.hbGlyphId}`}</title>
             </g>
           );
         })}
+
         {!loading && glyphs.length === 0 ? (
           <text x="12" y="24" fill="#6b7280" fontSize="14">
             Нет глифов для отображения. Введите текст и нажмите Shape.
@@ -90,7 +116,26 @@ export default function VisualDecoderLab() {
         ) : null}
       </svg>
 
-      <p style={{ marginTop: 8, color: '#4b5563' }}>Кликните по глифу в SVG, чтобы увидеть связанные edu units.</p>
+      <p style={{ marginTop: 8, color: '#4b5563' }}>Можно кликать и по SVG-боксу, и по кнопкам глифов ниже.</p>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        {glyphs.map((glyph) => (
+          <button
+            key={`chip-${glyph.id}`}
+            type="button"
+            onClick={() => setSelectedGlyphId(glyph.id)}
+            style={{
+              border: glyph.id === selectedGlyphId ? '2px solid #1d4ed8' : '1px solid #d1d5db',
+              background: glyph.id === selectedGlyphId ? '#eff6ff' : '#fff',
+              padding: '4px 8px',
+              borderRadius: 6,
+              cursor: 'pointer'
+            }}
+          >
+            glyph #{glyph.id} ({glyph.clusterText})
+          </button>
+        ))}
+      </div>
 
       <div style={{ marginTop: 12 }}>
         <strong>Selected glyph links:</strong>
