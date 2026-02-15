@@ -49,10 +49,53 @@ function canParseFontFile(fontPath) {
 }
 
 
+function getFontStatus(font) {
+  if (!fs.existsSync(font.path)) {
+    return {
+      id: font.id,
+      label: font.label,
+      file: path.basename(font.path),
+      available: false,
+      reason: 'missing_file'
+    };
+  }
+
+  const fileSize = fs.statSync(font.path).size;
+  if (fileSize === 0) {
+    return {
+      id: font.id,
+      label: font.label,
+      file: path.basename(font.path),
+      available: false,
+      reason: 'empty_file'
+    };
+  }
+
+  if (!canParseFontFile(font.path)) {
+    return {
+      id: font.id,
+      label: font.label,
+      file: path.basename(font.path),
+      available: false,
+      reason: 'invalid_font'
+    };
+  }
+
+  return {
+    id: font.id,
+    label: font.label,
+    file: path.basename(font.path),
+    available: true,
+    reason: null
+  };
+}
+
+function getFontOptions() {
+  return FONT_CATALOG.map(getFontStatus);
+}
+
 function getAvailableFonts() {
-  return FONT_CATALOG
-    .filter((font) => fs.existsSync(font.path) && canParseFontFile(font.path))
-    .map((font) => ({ id: font.id, label: font.label, file: path.basename(font.path) }));
+  return getFontOptions().filter((font) => font.available);
 }
 
 function resolveFontEntry(fontId) {
@@ -275,7 +318,7 @@ const server = http.createServer(async (req, res) => {
 
   if (parsed.pathname === '/api/fonts' && req.method === 'GET') {
     json(res, 200, {
-      fonts: getAvailableFonts(),
+      fonts: getFontOptions(),
       defaultFontId: getAvailableFonts()[0]?.id || null
     });
     return;

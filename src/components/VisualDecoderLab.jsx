@@ -427,12 +427,14 @@ export default function VisualDecoderLab() {
             >
               <option value="auto">Auto (первый доступный)</option>
               {fontOptions.map((font) => (
-                <option key={font.id} value={font.id}>{font.label}</option>
+                <option key={font.id} value={font.id} disabled={!font.available}>
+                  {font.label}{font.available ? '' : ' (недоступен)'}
+                </option>
               ))}
             </select>
           </label>
           <span style={{ fontSize: '12px', color: '#92400e' }}>
-            Выберите шрифт и нажмите Shape
+            Доступные шрифты можно выбрать сразу, недоступные помечены в списке
           </span>
         </div>
 
