@@ -13,7 +13,7 @@ export default function VisualDecoderLab() {
   const [didAutoload, setDidAutoload] = useState(false);
   const [disableLigatures, setDisableLigatures] = useState(false);
   const [features, setFeatures] = useState('');
-  const [clusterLevel, setClusterLevel] = useState(2); // по умолчанию 2 для максимального разделения
+  const [clusterLevel, setClusterLevel] = useState(0); // по умолчанию 0 для корректного рендеринга слова
   const [enableSegmentation, setEnableSegmentation] = useState(true);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
@@ -42,6 +42,20 @@ export default function VisualDecoderLab() {
       default:
         return '#111';
     }
+  }
+
+  function getComponentArea(component) {
+    if (!component?.bb) return 0;
+    const width = Math.max(0, (component.bb.x2 || 0) - (component.bb.x1 || 0));
+    const height = Math.max(0, (component.bb.y2 || 0) - (component.bb.y1 || 0));
+    return width * height;
+  }
+
+
+  function isSplitDependentVowelChar(char) {
+    if (!char) return false;
+    const cp = char.codePointAt(0);
+    return cp === 0x17be || cp === 0x17bf || cp === 0x17c0 || cp === 0x17c4 || cp === 0x17c5;
   }
 
   // Вычисляем parts для каждого глифа на основе components или геометрии
@@ -81,15 +95,105 @@ export default function VisualDecoderLab() {
         }
 
         // Иначе - разные компоненты, создаём parts по символам
-        const parts = glyph.chars.map((char, charIdx) => {
-          const category = getCategoryForChar(char);
+        const charMeta = glyph.chars.map((char, charIdx) => ({
+          char,
+          charIdx,
+          category: getCategoryForChar(char),
+        }));
+
+        const hasBase = charMeta.some((item) => item.category === 'base_consonant' || item.category === 'independent_vowel');
+        const hasDependent = charMeta.some((item) => item.category === 'dependent_vowel');
+
+        const useAreaMapping =
+          hasBase &&
+          hasDependent &&
+          glyph.components.length === 2 &&
+          charMeta.length === 2;
+
+        let baseComponent = null;
+        let dependentComponent = null;
+        if (useAreaMapping) {
+          const [first, second] = glyph.components;
+          if (getComponentArea(first) >= getComponentArea(second)) {
+            baseComponent = first;
+            dependentComponent = second;
+          } else {
+            baseComponent = second;
+            dependentComponent = first;
+          }
+        }
+
+        const baseMeta = charMeta.find((item) => item.category === 'base_consonant' || item.category === 'independent_vowel');
+        const dependentMeta = charMeta.find((item) => item.category === 'dependent_vowel');
+
+        if (useAreaMapping && baseMeta && dependentMeta && isSplitDependentVowelChar(dependentMeta.char) && baseComponent?.bb) {
+          const bb = baseComponent.bb;
+          const bbWidth = Math.max(0, (bb.x2 || 0) - (bb.x1 || 0));
+          const bbHeight = Math.max(0, (bb.y2 || 0) - (bb.y1 || 0));
+          const tailWidth = Math.max(120, bbWidth * 0.3);
+
+          const baseClipWidth = Math.max(0, bbWidth - tailWidth);
+          const parts = [];
+
+          parts.push({
+            partId: `${glyph.id}-base-main`,
+            component: baseComponent,
+            char: baseMeta.char,
+            category: baseMeta.category,
+            color: getColorForCategory(baseMeta.category),
+            zone: 'component_split_base',
+            hbGlyphId: baseComponent?.hbGlyphId,
+            clipRect: {
+              x: bb.x1,
+              y: bb.y1,
+              width: baseClipWidth,
+              height: bbHeight,
+            },
+          });
+
+          if (dependentComponent) {
+            parts.push({
+              partId: `${glyph.id}-vowel-leading`,
+              component: dependentComponent,
+              char: dependentMeta.char,
+              category: dependentMeta.category,
+              color: getColorForCategory(dependentMeta.category),
+              zone: 'component_split_vowel_leading',
+              hbGlyphId: dependentComponent?.hbGlyphId,
+            });
+          }
+
+          parts.push({
+            partId: `${glyph.id}-vowel-trailing`,
+            component: baseComponent,
+            char: dependentMeta.char,
+            category: dependentMeta.category,
+            color: getColorForCategory(dependentMeta.category),
+            zone: 'component_split_vowel_trailing',
+            hbGlyphId: baseComponent?.hbGlyphId,
+            clipRect: {
+              x: bb.x1 + baseClipWidth,
+              y: bb.y1,
+              width: Math.min(tailWidth, bbWidth),
+              height: bbHeight,
+            },
+          });
+
+          return { ...glyph, parts };
+        }
+
+        const parts = charMeta.map(({ char, charIdx, category }) => {
           const color = getColorForCategory(category);
 
           // Ищем компонент который соответствует этому символу
           // Эвристика: согласные обычно первый компонент, гласные - последний
           let component = null;
 
-          if (category === 'base_consonant' || category === 'independent_vowel') {
+          if (useAreaMapping && (category === 'base_consonant' || category === 'independent_vowel')) {
+            component = baseComponent;
+          } else if (useAreaMapping && category === 'dependent_vowel') {
+            component = dependentComponent;
+          } else if (category === 'base_consonant' || category === 'independent_vowel') {
             // Берём первый компонент (согласная обычно в начале)
             component = glyph.components[0];
           } else if (category === 'dependent_vowel') {
@@ -283,15 +387,43 @@ export default function VisualDecoderLab() {
                 if (part.component) {
                   // Часть из компонента сервера
                   xPos = part.component.x * SCALE + 50;
-                  yPos = BASELINE_Y; // компонент имеет свой y, который будет применен через transform? В компоненте y уже учтено в path? Нет, path без смещения, смещение в component.x и component.y. Поэтому transform должен использовать component.x и component.y.
-                  // Но в текущем коде для компонентов мы передаем transform с xPos и yOffset, и затем path компонента рисуется без дополнительного смещения. Это правильно, если component.x и component.y уже включены в transform.
-                  // Однако component.x и component.y - это абсолютные координаты в пространстве шрифта, которые мы добавляем к transform.
-                  // Значит, для компонента transform: matrix(SCALE,0,0,SCALE, xPos, BASELINE_Y) и затем path рисуется, но path не содержит смещения. Но component.x уже добавлено в xPos. component.y должно быть добавлено к BASELINE_Y? В текущем коде мы используем BASELINE_Y как базу, а y компонента не прибавляем. Это ошибка. Надо прибавлять component.y к BASELINE_Y.
-                  // Пересмотрим: в сервере мы сохранили component.x и component.y как абсолютные координаты в пространстве шрифта (с учетом dx, dy). При рендеринге мы должны преобразовать их в SVG координаты: x_svg = 50 + component.x * SCALE, y_svg = BASELINE_Y + component.y * SCALE.
-                  // Поэтому исправим:
+                  yPos = BASELINE_Y;
                   const compX = 50 + part.component.x * SCALE;
                   const compY = BASELINE_Y + part.component.y * SCALE;
                   pathData = part.component.d;
+
+                  if (part.clipRect) {
+                    const clipId = `clip-${part.partId}`;
+                    const cr = part.clipRect;
+
+                    return (
+                      <g key={part.partId}>
+                        <defs>
+                          <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
+                            <rect x={cr.x} y={cr.y} width={cr.width} height={cr.height} />
+                          </clipPath>
+                        </defs>
+                        <g
+                          onClick={() => {
+                            setSelectedPartKey(part.partId);
+                            console.log('[SELECTED PART]', part);
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <path
+                            d={pathData}
+                            fill={isSelected ? '#3b82f6' : part.color}
+                            transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${compX}, ${compY})`}
+                            clipPath={`url(#${clipId})`}
+                            stroke={isSelected ? '#1d4ed8' : 'none'}
+                            strokeWidth={isSelected ? '30' : '0'}
+                            opacity={0.9}
+                          />
+                        </g>
+                      </g>
+                    );
+                  }
+
                   return (
                     <g
                       key={part.partId}
