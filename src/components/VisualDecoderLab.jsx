@@ -49,6 +49,56 @@ export default function VisualDecoderLab() {
   }
 
 
+  function getComponentCenterY(component) {
+    if (!component?.bb) return 0;
+    return ((component.bb.y1 || 0) + (component.bb.y2 || 0)) / 2;
+  }
+
+  function pickComponentForCategory(glyph, category, charIdx, charMeta) {
+    const components = glyph.components || [];
+    if (components.length === 0) return null;
+    if (components.length === 1) return components[0];
+
+    const byAreaDesc = [...components].sort((a, b) => getComponentArea(b) - getComponentArea(a));
+    const baseCandidate = byAreaDesc[0] || components[0];
+    const markCandidate = [...components].sort((a, b) => {
+      if ((a.advance || 0) !== (b.advance || 0)) return (a.advance || 0) - (b.advance || 0);
+      return getComponentArea(a) - getComponentArea(b);
+    })[0] || components[components.length - 1];
+
+    const hasDiacritic = charMeta.some((item) => item.category === 'diacritic_sign' || item.category === 'diacritic');
+
+    if (category === 'base_consonant' || category === 'independent_vowel') {
+      return baseCandidate;
+    }
+
+    if (category === 'dependent_vowel') {
+      if (hasDiacritic) return baseCandidate;
+      return components[components.length - 1] || baseCandidate;
+    }
+
+    if (category === 'diacritic_sign' || category === 'diacritic') {
+      return markCandidate;
+    }
+
+    if (category === 'subscript_consonant') {
+      const nonBase = components.find((comp) => comp !== baseCandidate);
+      if (nonBase) return nonBase;
+      return [...components].sort((a, b) => getComponentCenterY(a) - getComponentCenterY(b))[0];
+    }
+
+    if (category === 'coeng') {
+      const subscriptPart = charMeta.some((item) => item.category === 'subscript_consonant');
+      if (subscriptPart) {
+        const nonBase = components.find((comp) => comp !== baseCandidate);
+        if (nonBase) return nonBase;
+      }
+    }
+
+    return components[Math.min(charIdx, components.length - 1)] || components[0];
+  }
+
+
   function isSplitDependentVowelChar(char) {
     if (!char) return false;
     const cp = char.codePointAt(0);
@@ -182,26 +232,13 @@ export default function VisualDecoderLab() {
         const parts = charMeta.map(({ char, charIdx, category }) => {
           const color = getColorForCategory(category);
 
-          // Ищем компонент который соответствует этому символу
-          // Эвристика: согласные обычно первый компонент, гласные - последний
           let component = null;
-
           if (useAreaMapping && (category === 'base_consonant' || category === 'independent_vowel')) {
             component = baseComponent;
           } else if (useAreaMapping && category === 'dependent_vowel') {
             component = dependentComponent;
-          } else if (category === 'base_consonant' || category === 'independent_vowel') {
-            // Берём первый компонент (согласная обычно в начале)
-            component = glyph.components[0];
-          } else if (category === 'dependent_vowel') {
-            // Берём последний компонент (гласная обычно добавляется последней)
-            component = glyph.components[glyph.components.length - 1];
-          } else if (category === 'subscript_consonant') {
-            // Подписные согласные обычно в середине или в конце
-            component = glyph.components[Math.min(1, glyph.components.length - 1)];
           } else {
-            // Для остальных - берём по индексу или первый
-            component = glyph.components[Math.min(charIdx, glyph.components.length - 1)];
+            component = pickComponentForCategory(glyph, category, charIdx, charMeta);
           }
 
           return {
