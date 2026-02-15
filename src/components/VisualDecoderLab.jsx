@@ -13,7 +13,7 @@ export default function VisualDecoderLab() {
   const [didAutoload, setDidAutoload] = useState(false);
   const [disableLigatures, setDisableLigatures] = useState(false);
   const [features, setFeatures] = useState('');
-  const [clusterLevel, setClusterLevel] = useState(2); // по умолчанию 2 для максимального разделения
+  const [clusterLevel, setClusterLevel] = useState(0); // по умолчанию 0 для корректного рендеринга слова
   const [enableSegmentation, setEnableSegmentation] = useState(true);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
@@ -42,6 +42,13 @@ export default function VisualDecoderLab() {
       default:
         return '#111';
     }
+  }
+
+  function getComponentArea(component) {
+    if (!component?.bb) return 0;
+    const width = Math.max(0, (component.bb.x2 || 0) - (component.bb.x1 || 0));
+    const height = Math.max(0, (component.bb.y2 || 0) - (component.bb.y1 || 0));
+    return width * height;
   }
 
   // Вычисляем parts для каждого глифа на основе components или геометрии
@@ -81,15 +88,46 @@ export default function VisualDecoderLab() {
         }
 
         // Иначе - разные компоненты, создаём parts по символам
-        const parts = glyph.chars.map((char, charIdx) => {
-          const category = getCategoryForChar(char);
+        const charMeta = glyph.chars.map((char, charIdx) => ({
+          char,
+          charIdx,
+          category: getCategoryForChar(char),
+        }));
+
+        const hasBase = charMeta.some((item) => item.category === 'base_consonant' || item.category === 'independent_vowel');
+        const hasDependent = charMeta.some((item) => item.category === 'dependent_vowel');
+
+        const useAreaMapping =
+          hasBase &&
+          hasDependent &&
+          glyph.components.length === 2 &&
+          charMeta.length === 2;
+
+        let baseComponent = null;
+        let dependentComponent = null;
+        if (useAreaMapping) {
+          const [first, second] = glyph.components;
+          if (getComponentArea(first) >= getComponentArea(second)) {
+            baseComponent = first;
+            dependentComponent = second;
+          } else {
+            baseComponent = second;
+            dependentComponent = first;
+          }
+        }
+
+        const parts = charMeta.map(({ char, charIdx, category }) => {
           const color = getColorForCategory(category);
 
           // Ищем компонент который соответствует этому символу
           // Эвристика: согласные обычно первый компонент, гласные - последний
           let component = null;
 
-          if (category === 'base_consonant' || category === 'independent_vowel') {
+          if (useAreaMapping && (category === 'base_consonant' || category === 'independent_vowel')) {
+            component = baseComponent;
+          } else if (useAreaMapping && category === 'dependent_vowel') {
+            component = dependentComponent;
+          } else if (category === 'base_consonant' || category === 'independent_vowel') {
             // Берём первый компонент (согласная обычно в начале)
             component = glyph.components[0];
           } else if (category === 'dependent_vowel') {
