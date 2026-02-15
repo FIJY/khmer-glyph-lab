@@ -40,56 +40,121 @@ async function initShaper() {
   otFont = opentype.parse(arrayBuffer);
 }
 
-function computeClusters(text, glyphRecords) {
-  const starts = [...new Set(glyphRecords.map((g) => g.cl))].sort((a, b) => a - b);
-  const boundaries = starts.map((start, i) => ({
-    cluster: start,
-    clusterStart: start,
-    clusterEnd: starts[i + 1] ?? text.length
-  }));
-  const byCluster = new Map(boundaries.map((entry) => [entry.cluster, entry]));
-  return byCluster;
+function getGlyphPathAndBBox(glyphId) {
+  try {
+    const glyphObj = otFont.glyphs.get(glyphId);
+    if (glyphObj) {
+      const path = glyphObj.getPath(0, 0, otFont.unitsPerEm);
+      const bb = path.getBoundingBox();
+      return {
+        d: path.toPathData(2),
+        bb: { x1: bb.x1, y1: bb.y1, x2: bb.x2, y2: bb.y2 }
+      };
+    }
+  } catch (e) {
+    console.warn('[glyph:warn]', e.message);
+  }
+  return { d: '', bb: { x1: 0, y1: 0, x2: 0, y2: 0 } };
 }
 
-function toGlyphMeta(text, shaped) {
-  const clusters = computeClusters(text, shaped);
-  let xCursor = 0;
+function parseFeaturesFromQuery(featuresStr) {
+  if (!featuresStr) return null;
+  const features = [];
+  const pairs = featuresStr.split(',');
+  for (const pair of pairs) {
+    const [tag, valueStr] = pair.trim().split(':');
+    if (tag && valueStr !== undefined) {
+      features.push({
+        tag: tag.trim(),
+        value: parseInt(valueStr, 10) || 0
+      });
+    }
+  }
+  return features.length > 0 ? features : null;
+}
 
-  return shaped.map((glyph, index) => {
-    const clusterMeta = clusters.get(glyph.cl) || { clusterStart: glyph.cl, clusterEnd: glyph.cl + 1 };
-    const clusterText = text.slice(clusterMeta.clusterStart, clusterMeta.clusterEnd);
+async function shapeText(rawText, options = {}) {
+  const text = (rawText || '').normalize('NFC');
+  if (!text) return [];
+
+  await initShaper();
+
+  const buffer = hb.createBuffer();
+  const clusterLevel = options.clusterLevel !== undefined ? options.clusterLevel : 0;
+  buffer.setClusterLevel(clusterLevel);  // важно до addText
+  buffer.addText(text);
+  buffer.guessSegmentProperties();
+
+  const features = options.features || null;
+  if (features && Array.isArray(features)) {
+    console.log('[shape] Using features:', features);
+    hb.shape(hbFont, buffer, { features });
+  } else {
+    console.log('[shape] No features, default shaping');
+    hb.shape(hbFont, buffer);
+  }
+
+  const shaped = buffer.json();
+  console.log('[shape] Shaped glyphs:', shaped.length);
+
+  // Группировка по кластеру
+  const clusters = new Map();
+  let globalX = 0;
+
+  for (let i = 0; i < shaped.length; i++) {
+    const glyph = shaped[i];
+    const cl = glyph.cl;
+    if (!clusters.has(cl)) {
+      clusters.set(cl, { glyphRecords: [], baseX: globalX });
+    }
+    clusters.get(cl).glyphRecords.push(glyph);
+    // Не увеличиваем globalX здесь – сделаем после обработки кластера
+  }
+
+  const sortedClusters = Array.from(clusters.entries()).sort((a, b) => a[0] - b[0]);
+  const result = [];
+
+  for (const [cl, { glyphRecords }] of sortedClusters) {
+    // Определяем текстовый диапазон кластера
+    const nextCluster = sortedClusters.find(c => c[0] > cl)?.[0] ?? text.length;
+    const clusterStart = cl;
+    const clusterEnd = nextCluster;
+    const clusterText = text.slice(clusterStart, clusterEnd);
     const chars = Array.from(clusterText);
-    const codePoints = chars.map((char) => char.codePointAt(0));
-
-    const primaryChar = chars.find((char) => isKhmerConsonantChar(char)) || chars[0] || '';
+    const codePoints = chars.map(c => c.codePointAt(0));
+    const primaryChar = chars.find(c => isKhmerConsonantChar(c)) || chars[0] || '';
     const hasCoeng = codePoints.includes(0x17d2);
-    const hasSubscriptConsonant = chars.some((char, i) => codePoints[i - 1] === 0x17d2 && isKhmerConsonantChar(char));
-    const hasDependentVowel = chars.some((char) => isKhmerDependentVowel(char));
-    const hasDiacritic = chars.some((char) => isKhmerDiacriticOrSign(char));
+    const hasSubscriptConsonant = chars.some((c, i) => codePoints[i-1] === 0x17d2 && isKhmerConsonantChar(c));
+    const hasDependentVowel = chars.some(c => isKhmerDependentVowel(c));
+    const hasDiacritic = chars.some(c => isKhmerDiacriticOrSign(c));
 
-    let glyphPath = null;
-    let bb = { x1: 0, y1: 0, x2: 0, y2: 0 };
-    try {
-      const glyphObj = otFont.glyphs.get(glyph.g);
-      if (glyphObj) {
-        glyphPath = glyphObj.getPath(0, 0, otFont.unitsPerEm);
-        bb = glyphPath.getBoundingBox();
-      }
-    } catch (glyphError) {
-      console.warn('[glyph:warn]', glyphError.message);
+    const components = [];
+    let clusterAdvance = 0;
+
+    for (let i = 0; i < glyphRecords.length; i++) {
+      const rec = glyphRecords[i];
+      const { d, bb } = getGlyphPathAndBBox(rec.g);
+      const x = globalX + rec.dx;
+      const y = rec.dy;
+
+      components.push({
+        hbGlyphId: rec.g,
+        d,
+        bb,
+        x,
+        y,
+        advance: rec.ax,
+        clusterIndex: i,  // порядковый номер в кластере
+      });
+
+      clusterAdvance += rec.ax;
     }
 
-    const x = xCursor + glyph.dx;
-    const y = glyph.dy;
-    xCursor += glyph.ax;
-
-    return {
-      id: index,
-      glyphIdx: index,
-      hbGlyphId: glyph.g,
-      cluster: glyph.cl,
-      clusterStart: clusterMeta.clusterStart,
-      clusterEnd: clusterMeta.clusterEnd,
+    const glyphObj = {
+      id: result.length,
+      cluster: cl,
+      clusterStart,
+      clusterEnd,
       clusterText,
       chars,
       codePoints,
@@ -98,32 +163,24 @@ function toGlyphMeta(text, shaped) {
       hasSubscriptConsonant,
       hasDependentVowel,
       hasDiacritic,
-      d: glyphPath ? glyphPath.toPathData(2) : '',
-      bb,
-      advance: glyph.ax,
-      x,
-      y,
+      components,
+      // для обратной совместимости
+      d: components[0]?.d || '',
+      bb: components[0]?.bb || { x1:0, y1:0, x2:0, y2:0 },
+      advance: clusterAdvance,
+      x: components[0]?.x || globalX,
+      y: components[0]?.y || 0,
       fontInfo: {
         fontName: otFont.names.fullName?.en || 'Unknown',
         fontVersion: otFont.names.version?.en || 'Unknown',
         unitsPerEm: otFont.unitsPerEm
       }
     };
-  });
-}
 
-async function shapeText(rawText) {
-  const text = (rawText || '').normalize('NFC');
-  if (!text) return [];
+    result.push(glyphObj);
+    globalX += clusterAdvance;
+  }
 
-  await initShaper();
-
-  const buffer = hb.createBuffer();
-  buffer.addText(text);
-  buffer.guessSegmentProperties();
-  hb.shape(hbFont, buffer);
-  const shaped = buffer.json();
-  const result = toGlyphMeta(text, shaped);
   buffer.destroy();
   return result;
 }
@@ -159,7 +216,9 @@ const server = http.createServer(async (req, res) => {
 
   if (parsed.pathname === '/api/shape' && req.method === 'GET') {
     try {
-      const shaped = await shapeText(parsed.query.text || '');
+      const features = parseFeaturesFromQuery(parsed.query.features);
+      const clusterLevel = parsed.query.clusterLevel ? parseInt(parsed.query.clusterLevel, 10) : 0;
+      const shaped = await shapeText(parsed.query.text || '', { features, clusterLevel });
       json(res, 200, shaped);
     } catch (error) {
       console.error('[shape:error]', error);
@@ -173,4 +232,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Khmer Glyph Lab API listening on http://localhost:${PORT}`);
+  console.log(`Features API: /api/shape?text=កៅ&features=liga:0,ccmp:0`);
 });
