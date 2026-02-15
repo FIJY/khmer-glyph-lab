@@ -5,49 +5,105 @@ const url = require('url');
 const opentype = require('opentype.js');
 
 const PORT = Number(process.env.PORT || 3001);
-const FONT_PATHS = [
-  path.join(process.cwd(), 'public/fonts/KhmerOSBattambang.ttf'),
-  path.join(process.cwd(), 'public/fonts/KhmerOS_siemreap.ttf'),
-  path.join(process.cwd(), 'public/fonts/NotoSansKhmer-Regular.ttf')
+const FONT_CATALOG = [
+  {
+    id: 'khmer-os-battambang',
+    label: 'Khmer OS Battambang',
+    path: path.join(process.cwd(), 'public/fonts/KhmerOSBattambang.ttf')
+  },
+  {
+    id: 'khmer-os-siemreap',
+    label: 'Khmer OS Siemreap',
+    path: path.join(process.cwd(), 'public/fonts/KhmerOS_siemreap.ttf')
+  },
+  {
+    id: 'noto-sans-khmer',
+    label: 'Noto Sans Khmer',
+    path: path.join(process.cwd(), 'public/fonts/NotoSansKhmer-Regular.ttf')
+  }
 ];
 
 const { isKhmerConsonantChar, isKhmerDependentVowel, isKhmerDiacriticOrSign } = require('../src/lib/khmerClassifier.cjs');
 
 let hb;
-let hbFont;
-let hbFace;
-let hbBlob;
-let otFont;
+const shaperCache = new Map();
 
-function loadFontBuffer() {
-  for (const candidate of FONT_PATHS) {
-    if (fs.existsSync(candidate)) {
-      return fs.readFileSync(candidate);
-    }
+const fontValidationCache = new Map();
+
+function canParseFontFile(fontPath) {
+  if (fontValidationCache.has(fontPath)) {
+    return fontValidationCache.get(fontPath);
   }
-  throw new Error('Font file not found. Place KhmerOSBattambang.ttf in public/fonts/');
+
+  try {
+    const fontData = fs.readFileSync(fontPath);
+    const arrayBuffer = fontData.buffer.slice(fontData.byteOffset, fontData.byteOffset + fontData.byteLength);
+    opentype.parse(arrayBuffer);
+    fontValidationCache.set(fontPath, true);
+    return true;
+  } catch (error) {
+    console.warn('[font:warn] skipping unusable font', path.basename(fontPath), error.message);
+    fontValidationCache.set(fontPath, false);
+    return false;
+  }
 }
 
-async function initShaper() {
-  if (hbFont && otFont) return;
-  hb = await require('harfbuzzjs');
-  const fontData = loadFontBuffer();
+
+function getAvailableFonts() {
+  return FONT_CATALOG
+    .filter((font) => fs.existsSync(font.path) && canParseFontFile(font.path))
+    .map((font) => ({ id: font.id, label: font.label, file: path.basename(font.path) }));
+}
+
+function resolveFontEntry(fontId) {
+  const available = getAvailableFonts();
+  if (available.length === 0) {
+    throw new Error('Font file not found. Place KhmerOSBattambang.ttf in public/fonts/');
+  }
+
+  if (!fontId || fontId === 'auto') {
+    const first = available[0];
+    return FONT_CATALOG.find((font) => font.id === first.id);
+  }
+
+  const found = FONT_CATALOG.find((font) => font.id === fontId && fs.existsSync(font.path));
+  if (found) return found;
+
+  const first = available[0];
+  return FONT_CATALOG.find((font) => font.id === first.id);
+}
+
+async function getShaperForFont(fontId) {
+  if (!hb) {
+    hb = await require('harfbuzzjs');
+  }
+
+  const fontEntry = resolveFontEntry(fontId);
+  if (shaperCache.has(fontEntry.id)) {
+    return { ...shaperCache.get(fontEntry.id), fontEntry };
+  }
+
+  const fontData = fs.readFileSync(fontEntry.path);
   const arrayBuffer = fontData.buffer.slice(fontData.byteOffset, fontData.byteOffset + fontData.byteLength);
 
-  hbBlob = hb.createBlob(arrayBuffer);
-  hbFace = hb.createFace(hbBlob, 0);
-  hbFont = hb.createFont(hbFace);
-  otFont = opentype.parse(arrayBuffer);
+  const hbBlob = hb.createBlob(arrayBuffer);
+  const hbFace = hb.createFace(hbBlob, 0);
+  const hbFont = hb.createFont(hbFace);
+  const otFont = opentype.parse(arrayBuffer);
+
+  const shaper = { hbBlob, hbFace, hbFont, otFont };
+  shaperCache.set(fontEntry.id, shaper);
+  return { ...shaper, fontEntry };
 }
 
-function getGlyphPathAndBBox(glyphId) {
+function getGlyphPathAndBBox(otFont, glyphId) {
   try {
     const glyphObj = otFont.glyphs.get(glyphId);
     if (glyphObj) {
-      const path = glyphObj.getPath(0, 0, otFont.unitsPerEm);
-      const bb = path.getBoundingBox();
+      const pathData = glyphObj.getPath(0, 0, otFont.unitsPerEm);
+      const bb = pathData.getBoundingBox();
       return {
-        d: path.toPathData(2),
+        d: pathData.toPathData(2),
         bb: { x1: bb.x1, y1: bb.y1, x2: bb.x2, y2: bb.y2 }
       };
     }
@@ -77,11 +133,11 @@ async function shapeText(rawText, options = {}) {
   const text = (rawText || '').normalize('NFC');
   if (!text) return [];
 
-  await initShaper();
+  const { hbFont, otFont, fontEntry } = await getShaperForFont(options.fontId);
 
   const buffer = hb.createBuffer();
   const clusterLevel = options.clusterLevel !== undefined ? options.clusterLevel : 0;
-  buffer.setClusterLevel(clusterLevel);  // важно до addText
+  buffer.setClusterLevel(clusterLevel);
   buffer.addText(text);
   buffer.guessSegmentProperties();
 
@@ -95,9 +151,8 @@ async function shapeText(rawText, options = {}) {
   }
 
   const shaped = buffer.json();
-  console.log('[shape] Shaped glyphs:', shaped.length);
+  console.log('[shape] Shaped glyphs:', shaped.length, 'font:', fontEntry.id);
 
-  // Группировка по кластеру
   const clusters = new Map();
   let globalX = 0;
 
@@ -108,14 +163,12 @@ async function shapeText(rawText, options = {}) {
       clusters.set(cl, { glyphRecords: [], baseX: globalX });
     }
     clusters.get(cl).glyphRecords.push(glyph);
-    // Не увеличиваем globalX здесь – сделаем после обработки кластера
   }
 
   const sortedClusters = Array.from(clusters.entries()).sort((a, b) => a[0] - b[0]);
   const result = [];
 
   for (const [cl, { glyphRecords }] of sortedClusters) {
-    // Определяем текстовый диапазон кластера
     const nextCluster = sortedClusters.find(c => c[0] > cl)?.[0] ?? text.length;
     const clusterStart = cl;
     const clusterEnd = nextCluster;
@@ -124,7 +177,7 @@ async function shapeText(rawText, options = {}) {
     const codePoints = chars.map(c => c.codePointAt(0));
     const primaryChar = chars.find(c => isKhmerConsonantChar(c)) || chars[0] || '';
     const hasCoeng = codePoints.includes(0x17d2);
-    const hasSubscriptConsonant = chars.some((c, i) => codePoints[i-1] === 0x17d2 && isKhmerConsonantChar(c));
+    const hasSubscriptConsonant = chars.some((c, i) => codePoints[i - 1] === 0x17d2 && isKhmerConsonantChar(c));
     const hasDependentVowel = chars.some(c => isKhmerDependentVowel(c));
     const hasDiacritic = chars.some(c => isKhmerDiacriticOrSign(c));
 
@@ -134,7 +187,7 @@ async function shapeText(rawText, options = {}) {
 
     for (let i = 0; i < glyphRecords.length; i++) {
       const rec = glyphRecords[i];
-      const { d, bb } = getGlyphPathAndBBox(rec.g);
+      const { d, bb } = getGlyphPathAndBBox(otFont, rec.g);
       const x = clusterPenX + rec.dx;
       // HarfBuzz возвращает dy в системе координат "ось Y вверх",
       // а SVG рендерится с "ось Y вниз" — инвертируем знак.
@@ -147,7 +200,7 @@ async function shapeText(rawText, options = {}) {
         x,
         y,
         advance: rec.ax,
-        clusterIndex: i,  // порядковый номер в кластере
+        clusterIndex: i,
       });
 
       clusterPenX += rec.ax;
@@ -168,13 +221,15 @@ async function shapeText(rawText, options = {}) {
       hasDependentVowel,
       hasDiacritic,
       components,
-      // для обратной совместимости
       d: components[0]?.d || '',
-      bb: components[0]?.bb || { x1:0, y1:0, x2:0, y2:0 },
+      bb: components[0]?.bb || { x1: 0, y1: 0, x2: 0, y2: 0 },
       advance: clusterAdvance,
       x: components[0]?.x || globalX,
       y: components[0]?.y || 0,
       fontInfo: {
+        fontId: fontEntry.id,
+        fontLabel: fontEntry.label,
+        fontFile: path.basename(fontEntry.path),
         fontName: otFont.names.fullName?.en || 'Unknown',
         fontVersion: otFont.names.version?.en || 'Unknown',
         unitsPerEm: otFont.unitsPerEm
@@ -218,11 +273,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (parsed.pathname === '/api/fonts' && req.method === 'GET') {
+    json(res, 200, {
+      fonts: getAvailableFonts(),
+      defaultFontId: getAvailableFonts()[0]?.id || null
+    });
+    return;
+  }
+
   if (parsed.pathname === '/api/shape' && req.method === 'GET') {
     try {
       const features = parseFeaturesFromQuery(parsed.query.features);
       const clusterLevel = parsed.query.clusterLevel ? parseInt(parsed.query.clusterLevel, 10) : 0;
-      const shaped = await shapeText(parsed.query.text || '', { features, clusterLevel });
+      const fontId = typeof parsed.query.font === 'string' ? parsed.query.font : 'auto';
+      const shaped = await shapeText(parsed.query.text || '', { features, clusterLevel, fontId });
       json(res, 200, shaped);
     } catch (error) {
       console.error('[shape:error]', error);
@@ -236,5 +300,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Khmer Glyph Lab API listening on http://localhost:${PORT}`);
-  console.log(`Features API: /api/shape?text=កៅ&features=liga:0,ccmp:0`);
+  console.log('Fonts API: /api/fonts');
+  console.log('Shape API: /api/shape?text=កៅ&features=liga:0,ccmp:0&font=auto');
 });

@@ -16,6 +16,8 @@ export default function VisualDecoderLab() {
   const [features, setFeatures] = useState('');
   const [clusterLevel, setClusterLevel] = useState(0); // по умолчанию 0 для корректного рендеринга слова
   const [enableSegmentation, setEnableSegmentation] = useState(true);
+  const [fontOptions, setFontOptions] = useState([]);
+  const [selectedFont, setSelectedFont] = useState('auto');
 
   const units = useMemo(() => buildEduUnits(text), [text]);
 
@@ -241,6 +243,21 @@ export default function VisualDecoderLab() {
     });
   }, [glyphs, units, enableSegmentation]);
 
+  async function loadFonts() {
+    try {
+      const response = await fetch('http://localhost:3001/api/fonts');
+      if (!response.ok) return;
+      const payload = await response.json();
+      const fonts = Array.isArray(payload.fonts) ? payload.fonts : [];
+      setFontOptions(fonts);
+      if (payload.defaultFontId && selectedFont === 'auto') {
+        // 'auto' оставляем как явный режим, не переопределяем выбор пользователя
+      }
+    } catch (fontError) {
+      console.warn('[fonts] failed to load fonts', fontError);
+    }
+  }
+
   async function handleShape() {
     setLoading(true);
     setError("");
@@ -251,6 +268,10 @@ export default function VisualDecoderLab() {
 
       if (clusterLevel !== 0) {
         url += `&clusterLevel=${clusterLevel}`;
+      }
+
+      if (selectedFont && selectedFont !== 'auto') {
+        url += `&font=${encodeURIComponent(selectedFont)}`;
       }
 
       if (disableLigatures) {
@@ -281,6 +302,7 @@ export default function VisualDecoderLab() {
   useEffect(() => {
     if (didAutoload) return;
     setDidAutoload(true);
+    loadFonts();
     handleShape();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [didAutoload]);
@@ -293,27 +315,38 @@ export default function VisualDecoderLab() {
   );
 
   const verticalLayout = useMemo(() => {
-    const TOP_PADDING = 40;
-    const BOTTOM_PADDING = 60;
+    const TOP_PADDING = 50;
+    const BOTTOM_PADDING = 120;
     const FALLBACK_ASCENT = 180;
     const FALLBACK_DESCENT = 120;
+    const STROKE_MARGIN = 6;
 
     let minRelativeY = Infinity;
     let maxRelativeY = -Infinity;
 
+    const pushBounds = (offsetY, bb) => {
+      if (!bb) return;
+      const top = (offsetY + (bb.y1 || 0)) * SCALE;
+      const bottom = (offsetY + (bb.y2 || 0)) * SCALE;
+
+      minRelativeY = Math.min(minRelativeY, top, bottom);
+      maxRelativeY = Math.max(maxRelativeY, top, bottom);
+    };
+
     for (const glyph of glyphsWithParts) {
+      // 1) Границы реально отрисовываемых частей
       for (const part of glyph.parts || []) {
         const source = part.component || glyph;
-        const bb = source?.bb;
-        if (!bb) continue;
-
-        const offsetY = source.y || 0;
-        const top = (offsetY + (bb.y1 || 0)) * SCALE;
-        const bottom = (offsetY + (bb.y2 || 0)) * SCALE;
-
-        minRelativeY = Math.min(minRelativeY, top, bottom);
-        maxRelativeY = Math.max(maxRelativeY, top, bottom);
+        pushBounds(source?.y || 0, source?.bb);
       }
+
+      // 2) Границы всех серверных компонентов (на случай, если часть не замапилась)
+      for (const component of glyph.components || []) {
+        pushBounds(component?.y || 0, component?.bb);
+      }
+
+      // 3) Фолбэк на bbox самого глифа
+      pushBounds(glyph.y || 0, glyph.bb);
     }
 
     if (!Number.isFinite(minRelativeY) || !Number.isFinite(maxRelativeY)) {
@@ -321,8 +354,8 @@ export default function VisualDecoderLab() {
       maxRelativeY = FALLBACK_DESCENT;
     }
 
-    const baselineY = TOP_PADDING + Math.max(0, -minRelativeY);
-    const height = Math.max(400, Math.ceil(baselineY + maxRelativeY + BOTTOM_PADDING));
+    const baselineY = TOP_PADDING + Math.max(0, -minRelativeY) + STROKE_MARGIN;
+    const height = Math.max(400, Math.ceil(baselineY + maxRelativeY + BOTTOM_PADDING + STROKE_MARGIN));
 
     return {
       baselineY,
@@ -382,6 +415,25 @@ export default function VisualDecoderLab() {
               <option value={2}>2 - Monotone characters</option>
             </select>
           </label>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fef9c3', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔤 Шрифт:</span>
+            <select
+              value={selectedFont}
+              onChange={(e) => setSelectedFont(e.target.value)}
+              style={{ padding: '6px', fontSize: '14px' }}
+            >
+              <option value="auto">Auto (первый доступный)</option>
+              {fontOptions.map((font) => (
+                <option key={font.id} value={font.id}>{font.label}</option>
+              ))}
+            </select>
+          </label>
+          <span style={{ fontSize: '12px', color: '#92400e' }}>
+            Выберите шрифт и нажмите Shape
+          </span>
         </div>
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#dcfce7', borderRadius: '4px' }}>
