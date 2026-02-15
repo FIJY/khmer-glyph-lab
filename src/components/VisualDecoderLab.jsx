@@ -446,7 +446,7 @@ export default function VisualDecoderLab() {
                 } else {
                   // Часть из геометрической сегментации или целый глиф
                   xPos = glyph.x * SCALE + 50;
-                  yPos = BASELINE_Y;
+                  yPos = BASELINE_Y + glyph.y * SCALE;
                   pathData = part.pathData || glyph.d;
 
                   // Если есть clipRect - используем его для маскирования
