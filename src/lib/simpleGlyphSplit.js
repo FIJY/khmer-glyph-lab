@@ -17,8 +17,19 @@ export function createClipPathParts(glyph, units) {
 
   // Определяем split line (вертикальная линия разделения)
   const bbox = glyph.bb;
+  const width = bbox.x2 - bbox.x1;
   const centerX = (bbox.x1 + bbox.x2) / 2;
-  const splitX = centerX + (bbox.x2 - bbox.x1) * 0.1; // Чуть правее центра
+  const splitX = centerX + width * 0.1; // Чуть правее центра
+
+  const PRE_BASE_VOWELS = new Set([0x17be, 0x17bf, 0x17c0, 0x17c1, 0x17c2, 0x17c4, 0x17c5]);
+
+  const getDependentVowelZone = (unit) => {
+    const vowelCp = unit?.codePoints?.[0];
+    if (PRE_BASE_VOWELS.has(vowelCp)) {
+      return 'left';
+    }
+    return 'right';
+  };
 
   const parts = [];
 
@@ -37,13 +48,26 @@ export function createClipPathParts(glyph, units) {
       };
       color = '#22c55e'; // green
     } else if (category === 'dependent_vowel') {
-      // Правая часть (от splitX до x2)
-      clipRect = {
-        x: splitX,
-        y: bbox.y1,
-        width: bbox.x2 - splitX,
-        height: bbox.y2 - bbox.y1
-      };
+      const vowelZone = getDependentVowelZone(unit);
+
+      if (vowelZone === 'left') {
+        // Предбазовые гласные (например េ/ៃ/ៅ) должны быть слева от согласной
+        const leftSplitX = bbox.x1 + width * 0.42;
+        clipRect = {
+          x: bbox.x1,
+          y: bbox.y1,
+          width: leftSplitX - bbox.x1,
+          height: bbox.y2 - bbox.y1
+        };
+      } else {
+        // Постбазовые гласные/знаки справа
+        clipRect = {
+          x: splitX,
+          y: bbox.y1,
+          width: bbox.x2 - splitX,
+          height: bbox.y2 - bbox.y1
+        };
+      }
       color = '#ef4444'; // red
     } else if (category === 'subscript_consonant') {
       // Нижняя часть
