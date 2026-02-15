@@ -286,12 +286,52 @@ export default function VisualDecoderLab() {
   }, [didAutoload]);
 
   const SCALE = 0.1;
-  const BASELINE_Y = 280;
 
   const width = Math.max(
     800,
     glyphs.reduce((acc, glyph) => Math.max(acc, (glyph.x + glyph.advance) * SCALE + 100), 800)
   );
+
+  const verticalLayout = useMemo(() => {
+    const TOP_PADDING = 40;
+    const BOTTOM_PADDING = 60;
+    const FALLBACK_ASCENT = 180;
+    const FALLBACK_DESCENT = 120;
+
+    let minRelativeY = Infinity;
+    let maxRelativeY = -Infinity;
+
+    for (const glyph of glyphsWithParts) {
+      for (const part of glyph.parts || []) {
+        const source = part.component || glyph;
+        const bb = source?.bb;
+        if (!bb) continue;
+
+        const offsetY = source.y || 0;
+        const top = (offsetY + (bb.y1 || 0)) * SCALE;
+        const bottom = (offsetY + (bb.y2 || 0)) * SCALE;
+
+        minRelativeY = Math.min(minRelativeY, top, bottom);
+        maxRelativeY = Math.max(maxRelativeY, top, bottom);
+      }
+    }
+
+    if (!Number.isFinite(minRelativeY) || !Number.isFinite(maxRelativeY)) {
+      minRelativeY = -FALLBACK_ASCENT;
+      maxRelativeY = FALLBACK_DESCENT;
+    }
+
+    const baselineY = TOP_PADDING + Math.max(0, -minRelativeY);
+    const height = Math.max(400, Math.ceil(baselineY + maxRelativeY + BOTTOM_PADDING));
+
+    return {
+      baselineY,
+      height,
+      ascenderLineY: Math.max(0, baselineY - FALLBACK_ASCENT),
+      descenderLineY: Math.min(height, baselineY + FALLBACK_DESCENT),
+      labelY: Math.min(height - 10, baselineY + 40),
+    };
+  }, [glyphsWithParts]);
 
   return (
     <section>
@@ -363,13 +403,13 @@ export default function VisualDecoderLab() {
 
       <svg
         width={width}
-        height={400}
-        viewBox={`0 0 ${width} 400`}
+        height={verticalLayout.height}
+        viewBox={`0 0 ${width} ${verticalLayout.height}`}
         style={{ border: "2px solid #333", background: "#fafafa", display: "block" }}
       >
-        <line x1="0" y1={BASELINE_Y} x2={width} y2={BASELINE_Y} stroke="#f59e0b" strokeWidth="2" strokeDasharray="5 5" />
-        <line x1="0" y1="100" x2={width} y2="100" stroke="#e5e7eb" strokeDasharray="2 2" />
-        <line x1="0" y1="300" x2={width} y2="300" stroke="#e5e7eb" strokeDasharray="2 2" />
+        <line x1="0" y1={verticalLayout.baselineY} x2={width} y2={verticalLayout.baselineY} stroke="#f59e0b" strokeWidth="2" strokeDasharray="5 5" />
+        <line x1="0" y1={verticalLayout.ascenderLineY} x2={width} y2={verticalLayout.ascenderLineY} stroke="#e5e7eb" strokeDasharray="2 2" />
+        <line x1="0" y1={verticalLayout.descenderLineY} x2={width} y2={verticalLayout.descenderLineY} stroke="#e5e7eb" strokeDasharray="2 2" />
 
         {glyphsWithParts.map((glyph) => {
           // Рендерим части (parts) этого глифа
@@ -382,9 +422,9 @@ export default function VisualDecoderLab() {
                 if (part.component) {
                   // Часть из компонента сервера
                   xPos = part.component.x * SCALE + 50;
-                  yPos = BASELINE_Y;
+                  yPos = verticalLayout.baselineY;
                   const compX = 50 + part.component.x * SCALE;
-                  const compY = BASELINE_Y + part.component.y * SCALE;
+                  const compY = verticalLayout.baselineY + part.component.y * SCALE;
                   pathData = part.component.d;
 
                   if (part.clipRect) {
@@ -441,7 +481,7 @@ export default function VisualDecoderLab() {
                 } else {
                   // Часть из геометрической сегментации или целый глиф
                   xPos = glyph.x * SCALE + 50;
-                  yPos = BASELINE_Y + glyph.y * SCALE;
+                  yPos = verticalLayout.baselineY + glyph.y * SCALE;
                   pathData = part.pathData || glyph.d;
 
                   // Если есть clipRect - используем его для маскирования
@@ -506,7 +546,7 @@ export default function VisualDecoderLab() {
               })}
 
               {/* Подпись под глифом */}
-              <text x={glyph.x * SCALE + 50} y={BASELINE_Y + 40} fontSize="12" fill="#6b7280" textAnchor="middle">
+              <text x={glyph.x * SCALE + 50} y={verticalLayout.labelY} fontSize="12" fill="#6b7280" textAnchor="middle">
                 #{glyph.id} ({glyph.parts.length} part{glyph.parts.length !== 1 ? 's' : ''})
               </text>
             </g>

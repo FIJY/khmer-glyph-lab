@@ -136,7 +136,9 @@ async function shapeText(rawText, options = {}) {
       const rec = glyphRecords[i];
       const { d, bb } = getGlyphPathAndBBox(rec.g);
       const x = clusterPenX + rec.dx;
-      const y = rec.dy;
+      // HarfBuzz возвращает dy в системе координат "ось Y вверх",
+      // а SVG рендерится с "ось Y вниз" — инвертируем знак.
+      const y = -rec.dy;
 
       components.push({
         hbGlyphId: rec.g,
