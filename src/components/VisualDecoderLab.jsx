@@ -16,6 +16,8 @@ export default function VisualDecoderLab() {
   const [features, setFeatures] = useState('');
   const [clusterLevel, setClusterLevel] = useState(0); // по умолчанию 0 для корректного рендеринга слова
   const [enableSegmentation, setEnableSegmentation] = useState(true);
+  const [fontOptions, setFontOptions] = useState([]);
+  const [selectedFont, setSelectedFont] = useState('auto');
 
   const units = useMemo(() => buildEduUnits(text), [text]);
 
@@ -44,6 +46,56 @@ export default function VisualDecoderLab() {
     const width = Math.max(0, (component.bb.x2 || 0) - (component.bb.x1 || 0));
     const height = Math.max(0, (component.bb.y2 || 0) - (component.bb.y1 || 0));
     return width * height;
+  }
+
+
+  function getComponentCenterY(component) {
+    if (!component?.bb) return 0;
+    return ((component.bb.y1 || 0) + (component.bb.y2 || 0)) / 2;
+  }
+
+  function pickComponentForCategory(glyph, category, charIdx, charMeta) {
+    const components = glyph.components || [];
+    if (components.length === 0) return null;
+    if (components.length === 1) return components[0];
+
+    const byAreaDesc = [...components].sort((a, b) => getComponentArea(b) - getComponentArea(a));
+    const baseCandidate = byAreaDesc[0] || components[0];
+    const markCandidate = [...components].sort((a, b) => {
+      if ((a.advance || 0) !== (b.advance || 0)) return (a.advance || 0) - (b.advance || 0);
+      return getComponentArea(a) - getComponentArea(b);
+    })[0] || components[components.length - 1];
+
+    const hasDiacritic = charMeta.some((item) => item.category === 'diacritic_sign' || item.category === 'diacritic');
+
+    if (category === 'base_consonant' || category === 'independent_vowel') {
+      return baseCandidate;
+    }
+
+    if (category === 'dependent_vowel') {
+      if (hasDiacritic) return baseCandidate;
+      return components[components.length - 1] || baseCandidate;
+    }
+
+    if (category === 'diacritic_sign' || category === 'diacritic') {
+      return markCandidate;
+    }
+
+    if (category === 'subscript_consonant') {
+      const nonBase = components.find((comp) => comp !== baseCandidate);
+      if (nonBase) return nonBase;
+      return [...components].sort((a, b) => getComponentCenterY(a) - getComponentCenterY(b))[0];
+    }
+
+    if (category === 'coeng') {
+      const subscriptPart = charMeta.some((item) => item.category === 'subscript_consonant');
+      if (subscriptPart) {
+        const nonBase = components.find((comp) => comp !== baseCandidate);
+        if (nonBase) return nonBase;
+      }
+    }
+
+    return components[Math.min(charIdx, components.length - 1)] || components[0];
   }
 
 
@@ -180,26 +232,13 @@ export default function VisualDecoderLab() {
         const parts = charMeta.map(({ char, charIdx, category }) => {
           const color = getColorForCategory(category);
 
-          // Ищем компонент который соответствует этому символу
-          // Эвристика: согласные обычно первый компонент, гласные - последний
           let component = null;
-
           if (useAreaMapping && (category === 'base_consonant' || category === 'independent_vowel')) {
             component = baseComponent;
           } else if (useAreaMapping && category === 'dependent_vowel') {
             component = dependentComponent;
-          } else if (category === 'base_consonant' || category === 'independent_vowel') {
-            // Берём первый компонент (согласная обычно в начале)
-            component = glyph.components[0];
-          } else if (category === 'dependent_vowel') {
-            // Берём последний компонент (гласная обычно добавляется последней)
-            component = glyph.components[glyph.components.length - 1];
-          } else if (category === 'subscript_consonant') {
-            // Подписные согласные обычно в середине или в конце
-            component = glyph.components[Math.min(1, glyph.components.length - 1)];
           } else {
-            // Для остальных - берём по индексу или первый
-            component = glyph.components[Math.min(charIdx, glyph.components.length - 1)];
+            component = pickComponentForCategory(glyph, category, charIdx, charMeta);
           }
 
           return {
@@ -241,6 +280,21 @@ export default function VisualDecoderLab() {
     });
   }, [glyphs, units, enableSegmentation]);
 
+  async function loadFonts() {
+    try {
+      const response = await fetch('http://localhost:3001/api/fonts');
+      if (!response.ok) return;
+      const payload = await response.json();
+      const fonts = Array.isArray(payload.fonts) ? payload.fonts : [];
+      setFontOptions(fonts);
+      if (payload.defaultFontId && selectedFont === 'auto') {
+        // 'auto' оставляем как явный режим, не переопределяем выбор пользователя
+      }
+    } catch (fontError) {
+      console.warn('[fonts] failed to load fonts', fontError);
+    }
+  }
+
   async function handleShape() {
     setLoading(true);
     setError("");
@@ -251,6 +305,10 @@ export default function VisualDecoderLab() {
 
       if (clusterLevel !== 0) {
         url += `&clusterLevel=${clusterLevel}`;
+      }
+
+      if (selectedFont && selectedFont !== 'auto') {
+        url += `&font=${encodeURIComponent(selectedFont)}`;
       }
 
       if (disableLigatures) {
@@ -281,17 +339,69 @@ export default function VisualDecoderLab() {
   useEffect(() => {
     if (didAutoload) return;
     setDidAutoload(true);
+    loadFonts();
     handleShape();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [didAutoload]);
 
   const SCALE = 0.1;
-  const BASELINE_Y = 280;
 
   const width = Math.max(
     800,
     glyphs.reduce((acc, glyph) => Math.max(acc, (glyph.x + glyph.advance) * SCALE + 100), 800)
   );
+
+  const verticalLayout = useMemo(() => {
+    const TOP_PADDING = 50;
+    const BOTTOM_PADDING = 120;
+    const FALLBACK_ASCENT = 180;
+    const FALLBACK_DESCENT = 120;
+    const STROKE_MARGIN = 6;
+
+    let minRelativeY = Infinity;
+    let maxRelativeY = -Infinity;
+
+    const pushBounds = (offsetY, bb) => {
+      if (!bb) return;
+      const top = (offsetY + (bb.y1 || 0)) * SCALE;
+      const bottom = (offsetY + (bb.y2 || 0)) * SCALE;
+
+      minRelativeY = Math.min(minRelativeY, top, bottom);
+      maxRelativeY = Math.max(maxRelativeY, top, bottom);
+    };
+
+    for (const glyph of glyphsWithParts) {
+      // 1) Границы реально отрисовываемых частей
+      for (const part of glyph.parts || []) {
+        const source = part.component || glyph;
+        pushBounds(source?.y || 0, source?.bb);
+      }
+
+      // 2) Границы всех серверных компонентов (на случай, если часть не замапилась)
+      for (const component of glyph.components || []) {
+        pushBounds(component?.y || 0, component?.bb);
+      }
+
+      // 3) Фолбэк на bbox самого глифа
+      pushBounds(glyph.y || 0, glyph.bb);
+    }
+
+    if (!Number.isFinite(minRelativeY) || !Number.isFinite(maxRelativeY)) {
+      minRelativeY = -FALLBACK_ASCENT;
+      maxRelativeY = FALLBACK_DESCENT;
+    }
+
+    const baselineY = TOP_PADDING + Math.max(0, -minRelativeY) + STROKE_MARGIN;
+    const height = Math.max(400, Math.ceil(baselineY + maxRelativeY + BOTTOM_PADDING + STROKE_MARGIN));
+
+    return {
+      baselineY,
+      height,
+      ascenderLineY: Math.max(0, baselineY - FALLBACK_ASCENT),
+      descenderLineY: Math.min(height, baselineY + FALLBACK_DESCENT),
+      labelY: Math.min(height - 10, baselineY + 40),
+    };
+  }, [glyphsWithParts]);
 
   return (
     <section>
@@ -344,6 +454,27 @@ export default function VisualDecoderLab() {
           </label>
         </div>
 
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fef9c3', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔤 Шрифт:</span>
+            <select
+              value={selectedFont}
+              onChange={(e) => setSelectedFont(e.target.value)}
+              style={{ padding: '6px', fontSize: '14px' }}
+            >
+              <option value="auto">Auto (первый доступный)</option>
+              {fontOptions.map((font) => (
+                <option key={font.id} value={font.id} disabled={!font.available}>
+                  {font.label}{font.available ? '' : ' (недоступен)'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span style={{ fontSize: '12px', color: '#92400e' }}>
+            Доступные шрифты можно выбрать сразу, недоступные помечены в списке
+          </span>
+        </div>
+
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#dcfce7', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <input
@@ -363,13 +494,13 @@ export default function VisualDecoderLab() {
 
       <svg
         width={width}
-        height={400}
-        viewBox={`0 0 ${width} 400`}
+        height={verticalLayout.height}
+        viewBox={`0 0 ${width} ${verticalLayout.height}`}
         style={{ border: "2px solid #333", background: "#fafafa", display: "block" }}
       >
-        <line x1="0" y1={BASELINE_Y} x2={width} y2={BASELINE_Y} stroke="#f59e0b" strokeWidth="2" strokeDasharray="5 5" />
-        <line x1="0" y1="100" x2={width} y2="100" stroke="#e5e7eb" strokeDasharray="2 2" />
-        <line x1="0" y1="300" x2={width} y2="300" stroke="#e5e7eb" strokeDasharray="2 2" />
+        <line x1="0" y1={verticalLayout.baselineY} x2={width} y2={verticalLayout.baselineY} stroke="#f59e0b" strokeWidth="2" strokeDasharray="5 5" />
+        <line x1="0" y1={verticalLayout.ascenderLineY} x2={width} y2={verticalLayout.ascenderLineY} stroke="#e5e7eb" strokeDasharray="2 2" />
+        <line x1="0" y1={verticalLayout.descenderLineY} x2={width} y2={verticalLayout.descenderLineY} stroke="#e5e7eb" strokeDasharray="2 2" />
 
         {glyphsWithParts.map((glyph) => {
           // Рендерим части (parts) этого глифа
@@ -382,9 +513,9 @@ export default function VisualDecoderLab() {
                 if (part.component) {
                   // Часть из компонента сервера
                   xPos = part.component.x * SCALE + 50;
-                  yPos = BASELINE_Y;
+                  yPos = verticalLayout.baselineY;
                   const compX = 50 + part.component.x * SCALE;
-                  const compY = BASELINE_Y + part.component.y * SCALE;
+                  const compY = verticalLayout.baselineY + part.component.y * SCALE;
                   pathData = part.component.d;
 
                   if (part.clipRect) {
@@ -441,7 +572,7 @@ export default function VisualDecoderLab() {
                 } else {
                   // Часть из геометрической сегментации или целый глиф
                   xPos = glyph.x * SCALE + 50;
-                  yPos = BASELINE_Y + glyph.y * SCALE;
+                  yPos = verticalLayout.baselineY + glyph.y * SCALE;
                   pathData = part.pathData || glyph.d;
 
                   // Если есть clipRect - используем его для маскирования
@@ -506,7 +637,7 @@ export default function VisualDecoderLab() {
               })}
 
               {/* Подпись под глифом */}
-              <text x={glyph.x * SCALE + 50} y={BASELINE_Y + 40} fontSize="12" fill="#6b7280" textAnchor="middle">
+              <text x={glyph.x * SCALE + 50} y={verticalLayout.labelY} fontSize="12" fill="#6b7280" textAnchor="middle">
                 #{glyph.id} ({glyph.parts.length} part{glyph.parts.length !== 1 ? 's' : ''})
               </text>
             </g>

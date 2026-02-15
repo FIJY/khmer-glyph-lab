@@ -26,6 +26,7 @@ export function createClipPathParts(glyph, units) {
     const category = unit.category || 'other';
     let clipRect = null;
     let color = '#111';
+    let zoneName = 'clipped';
 
     if (category === 'base_consonant' || category === 'independent_vowel') {
       // Левая часть (от x1 до splitX)
@@ -36,6 +37,7 @@ export function createClipPathParts(glyph, units) {
         height: bbox.y2 - bbox.y1
       };
       color = '#22c55e'; // green
+      zoneName = 'left';
     } else if (category === 'dependent_vowel') {
       // Правая часть (от splitX до x2)
       clipRect = {
@@ -45,18 +47,9 @@ export function createClipPathParts(glyph, units) {
         height: bbox.y2 - bbox.y1
       };
       color = '#ef4444'; // red
+      zoneName = 'right';
     } else if (category === 'subscript_consonant') {
-      // Нижняя часть
-      const centerY = (bbox.y1 + bbox.y2) / 2;
-      clipRect = {
-        x: bbox.x1,
-        y: bbox.y1,
-        width: bbox.x2 - bbox.x1,
-        height: centerY - bbox.y1
-      };
-      color = '#3b82f6'; // blue
-    } else if (category === 'diacritic_sign' || category === 'diacritic') {
-      // Верхняя часть
+      // Нижняя часть (в SVG координатах это диапазон от centerY до y2)
       const centerY = (bbox.y1 + bbox.y2) / 2;
       clipRect = {
         x: bbox.x1,
@@ -64,7 +57,19 @@ export function createClipPathParts(glyph, units) {
         width: bbox.x2 - bbox.x1,
         height: bbox.y2 - centerY
       };
+      color = '#3b82f6'; // blue
+      zoneName = 'lower';
+    } else if (category === 'diacritic_sign' || category === 'diacritic') {
+      // Верхняя часть
+      const centerY = (bbox.y1 + bbox.y2) / 2;
+      clipRect = {
+        x: bbox.x1,
+        y: bbox.y1,
+        width: bbox.x2 - bbox.x1,
+        height: centerY - bbox.y1
+      };
       color = '#f59e0b'; // amber
+      zoneName = 'upper';
     }
 
     if (clipRect) {
@@ -75,7 +80,7 @@ export function createClipPathParts(glyph, units) {
         pathData: glyph.d, // Используем ПОЛНЫЙ путь!
         color,
         clipRect, // Вместо разделения path
-        zone: 'clipped'
+        zone: zoneName
       });
     }
   }

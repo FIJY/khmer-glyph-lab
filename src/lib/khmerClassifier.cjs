@@ -7,7 +7,8 @@ const KHMER = {
   DEPENDENT_VOWEL_END: 0x17c5,
   COENG: 0x17d2,
   DIACRITIC_RANGES: [
-    [0x17c6, 0x17d3],
+    [0x17c6, 0x17d1],
+    [0x17d3, 0x17d3],
     [0x17dd, 0x17dd]
   ],
   NUMERAL_START: 0x17e0,
