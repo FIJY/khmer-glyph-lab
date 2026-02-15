@@ -61,7 +61,8 @@ export default function VisualDecoderLab() {
       {error ? <p style={{ color: 'crimson' }}>{error}</p> : null}
 
       <svg width={width} height={260} viewBox={`0 -120 ${width} 260`} style={{ border: '1px solid #ddd', background: '#fff' }}>
-        <line x1="0" y1="140" x2={width} y2="140" stroke="#e5e7eb" strokeDasharray="4 4" />
+                <line x1="0" y1="140" x2={width} y2="140" stroke="#e5e7eb" strokeDasharray="4 4" />
+        <text x="12" y="136" fill="#9ca3af" fontSize="12">baseline</text>
         {glyphs.map((glyph) => {
           const isSelected = glyph.id === selectedGlyphId;
           return (
@@ -71,7 +72,7 @@ export default function VisualDecoderLab() {
               onClick={() => setSelectedGlyphId(glyph.id)}
               style={{ cursor: 'pointer' }}
             >
-              <path d={glyph.d} fill={isSelected ? '#1d4ed8' : '#111'} transform="scale(0.03 -0.03)" />
+              <path d={glyph.d} fill={isSelected ? '#1d4ed8' : '#111'} transform="scale(0.03 0.03)" />
               <rect
                 x={glyph.bb.x1 * 0.03}
                 y={-glyph.bb.y2 * 0.03}
