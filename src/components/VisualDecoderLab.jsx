@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { buildEduUnits } from "../lib/eduUnits.js";
 import { createClipPathParts } from "../lib/simpleGlyphSplit.js";
+import { getKhmerGlyphCategory } from "../lib/khmerClassifier.js";
 
 const DEBUG = Boolean(globalThis.window?.__EDU_DEBUG__);
 
@@ -17,12 +18,6 @@ export default function VisualDecoderLab() {
   const [enableSegmentation, setEnableSegmentation] = useState(true);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
-
-  // Функция для получения категории символа по eduUnits
-  function getCategoryForChar(char) {
-    const unit = units.find(u => u.text === char);
-    return unit ? unit.category : 'other';
-  }
 
   // Функция для определения цвета по категории (как в mapGlyphToVisualParts, но можно унифицировать)
   function getColorForCategory(category) {
@@ -98,7 +93,7 @@ export default function VisualDecoderLab() {
         const charMeta = glyph.chars.map((char, charIdx) => ({
           char,
           charIdx,
-          category: getCategoryForChar(char),
+          category: getKhmerGlyphCategory(char, glyph.chars[charIdx - 1]),
         }));
 
         const hasBase = charMeta.some((item) => item.category === 'base_consonant' || item.category === 'independent_vowel');
