@@ -5,23 +5,13 @@ const url = require('url');
 const opentype = require('opentype.js');
 
 const PORT = Number(process.env.PORT || 3001);
-const FONT_CATALOG = [
-  {
-    id: 'khmer-os-battambang',
-    label: 'Khmer OS Battambang',
-    path: path.join(process.cwd(), 'public/fonts/KhmerOSBattambang.ttf')
-  },
-  {
-    id: 'khmer-os-siemreap',
-    label: 'Khmer OS Siemreap',
-    path: path.join(process.cwd(), 'public/fonts/KhmerOS_siemreap.ttf')
-  },
-  {
-    id: 'noto-sans-khmer',
-    label: 'Noto Sans Khmer',
-    path: path.join(process.cwd(), 'public/fonts/NotoSansKhmer-Regular.ttf')
-  }
-];
+const FONTS_DIR = path.join(process.cwd(), 'public/fonts');
+const FONT_EXTENSIONS = new Set(['.ttf', '.otf', '.woff', '.woff2']);
+const FONT_LABEL_OVERRIDES = {
+  KhmerOSBattambang: 'Khmer OS Battambang',
+  KhmerOS_siemreap: 'Khmer OS Siemreap',
+  'NotoSansKhmer-Regular': 'Noto Sans Khmer'
+};
 
 const { isKhmerConsonantChar, isKhmerDependentVowel, isKhmerDiacriticOrSign } = require('../src/lib/khmerClassifier.cjs');
 
@@ -30,20 +20,71 @@ const shaperCache = new Map();
 
 const fontValidationCache = new Map();
 
+function toFontId(fileName) {
+  return fileName
+    .replace(path.extname(fileName), '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function toLabel(fileName) {
+  const base = fileName.replace(path.extname(fileName), '');
+  if (FONT_LABEL_OVERRIDES[base]) return FONT_LABEL_OVERRIDES[base];
+
+  return base
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function discoverFontCatalog() {
+  if (!fs.existsSync(FONTS_DIR)) {
+    return [];
+  }
+
+  const allEntries = fs.readdirSync(FONTS_DIR, { withFileTypes: true });
+  const fontFiles = allEntries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .filter((fileName) => FONT_EXTENSIONS.has(path.extname(fileName).toLowerCase()))
+    .sort((a, b) => a.localeCompare(b));
+
+  const usedIds = new Map();
+
+  return fontFiles.map((fileName) => {
+    const baseId = toFontId(fileName) || 'font';
+    const count = (usedIds.get(baseId) || 0) + 1;
+    usedIds.set(baseId, count);
+    const id = count === 1 ? baseId : `${baseId}-${count}`;
+
+    return {
+      id,
+      label: toLabel(fileName),
+      path: path.join(FONTS_DIR, fileName),
+      file: fileName
+    };
+  });
+}
+
 function canParseFontFile(fontPath) {
-  if (fontValidationCache.has(fontPath)) {
-    return fontValidationCache.get(fontPath);
+  const stat = fs.statSync(fontPath);
+  const cacheKey = `${fontPath}:${stat.mtimeMs}:${stat.size}`;
+
+  if (fontValidationCache.has(cacheKey)) {
+    return fontValidationCache.get(cacheKey);
   }
 
   try {
     const fontData = fs.readFileSync(fontPath);
     const arrayBuffer = fontData.buffer.slice(fontData.byteOffset, fontData.byteOffset + fontData.byteLength);
     opentype.parse(arrayBuffer);
-    fontValidationCache.set(fontPath, true);
+    fontValidationCache.set(cacheKey, true);
     return true;
   } catch (error) {
     console.warn('[font:warn] skipping unusable font', path.basename(fontPath), error.message);
-    fontValidationCache.set(fontPath, false);
+    fontValidationCache.set(cacheKey, false);
     return false;
   }
 }
@@ -54,7 +95,7 @@ function getFontStatus(font) {
     return {
       id: font.id,
       label: font.label,
-      file: path.basename(font.path),
+      file: font.file,
       available: false,
       reason: 'missing_file'
     };
@@ -65,7 +106,7 @@ function getFontStatus(font) {
     return {
       id: font.id,
       label: font.label,
-      file: path.basename(font.path),
+      file: font.file,
       available: false,
       reason: 'empty_file'
     };
@@ -75,7 +116,7 @@ function getFontStatus(font) {
     return {
       id: font.id,
       label: font.label,
-      file: path.basename(font.path),
+      file: font.file,
       available: false,
       reason: 'invalid_font'
     };
@@ -84,14 +125,14 @@ function getFontStatus(font) {
   return {
     id: font.id,
     label: font.label,
-    file: path.basename(font.path),
+    file: font.file,
     available: true,
     reason: null
   };
 }
 
 function getFontOptions() {
-  return FONT_CATALOG.map(getFontStatus);
+  return discoverFontCatalog().map(getFontStatus);
 }
 
 function getAvailableFonts() {
@@ -99,21 +140,22 @@ function getAvailableFonts() {
 }
 
 function resolveFontEntry(fontId) {
+  const catalog = discoverFontCatalog();
   const available = getAvailableFonts();
   if (available.length === 0) {
-    throw new Error('Font file not found. Place KhmerOSBattambang.ttf in public/fonts/');
+    throw new Error('No valid font files found in public/fonts');
   }
 
   if (!fontId || fontId === 'auto') {
     const first = available[0];
-    return FONT_CATALOG.find((font) => font.id === first.id);
+    return catalog.find((font) => font.id === first.id);
   }
 
-  const found = FONT_CATALOG.find((font) => font.id === fontId && fs.existsSync(font.path));
+  const found = catalog.find((font) => font.id === fontId && fs.existsSync(font.path));
   if (found) return found;
 
   const first = available[0];
-  return FONT_CATALOG.find((font) => font.id === first.id);
+  return catalog.find((font) => font.id === first.id);
 }
 
 async function getShaperForFont(fontId) {
