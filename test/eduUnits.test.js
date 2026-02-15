@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildEduUnits } from '../src/lib/eduUnits.js';
+import { getKhmerGlyphCategory } from '../src/lib/khmerClassifier.js';
 
 const labels = (units) => units.map((unit) => `${unit.text}:${unit.category}`);
 
@@ -23,4 +24,9 @@ test('keeps coeng sequence separate from dependent vowel and nikahit', () => {
     'ុ:dependent_vowel',
     'ំ:diacritic_sign'
   ]);
+});
+
+test('classifies coeng and the following consonant using local context', () => {
+  assert.equal(getKhmerGlyphCategory('្', 'ខ'), 'coeng');
+  assert.equal(getKhmerGlyphCategory('ញ', '្'), 'subscript_consonant');
 });
