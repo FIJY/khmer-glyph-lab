@@ -20,6 +20,8 @@ npm install
 npm run dev
 ```
 
+Скрипт `dev` кроссплатформенный (Windows/macOS/Linux), без зависимости от `bash`.
+
 - Frontend: http://localhost:5173
 - Backend: http://localhost:3001
 
