@@ -20,7 +20,9 @@ npm install
 npm run dev
 ```
 
-- Frontend: http://localhost:5173
+Скрипт `dev` кроссплатформенный (Windows/macOS/Linux), без зависимости от `bash`.
+
+- Frontend: обычно http://localhost:5173 (если порт занят, Vite может выбрать 5174 и выше — смотрите URL в консоли)
 - Backend: http://localhost:3001
 
 ## Endpoints

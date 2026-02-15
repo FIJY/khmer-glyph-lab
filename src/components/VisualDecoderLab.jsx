@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { buildEduUnits, mapEduUnitsToGlyphs } from '../lib/eduUnits.js';
 
 const DEBUG = Boolean(globalThis.window?.__EDU_DEBUG__);
@@ -9,6 +9,7 @@ export default function VisualDecoderLab() {
   const [selectedGlyphId, setSelectedGlyphId] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [didAutoload, setDidAutoload] = useState(false);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
   const mapping = useMemo(() => mapEduUnitsToGlyphs(glyphs, units), [glyphs, units]);
@@ -40,6 +41,14 @@ export default function VisualDecoderLab() {
     }
   }
 
+  useEffect(() => {
+    if (didAutoload) {
+      return;
+    }
+    setDidAutoload(true);
+    handleShape();
+  }, [didAutoload]);
+
   const width = Math.max(500, glyphs.reduce((acc, glyph) => Math.max(acc, glyph.x + glyph.advance + 40), 500));
 
   return (
@@ -52,6 +61,7 @@ export default function VisualDecoderLab() {
       {error ? <p style={{ color: 'crimson' }}>{error}</p> : null}
 
       <svg width={width} height={260} viewBox={`0 -120 ${width} 260`} style={{ border: '1px solid #ddd', background: '#fff' }}>
+        <line x1="0" y1="140" x2={width} y2="140" stroke="#e5e7eb" strokeDasharray="4 4" />
         {glyphs.map((glyph) => {
           const isSelected = glyph.id === selectedGlyphId;
           return (
@@ -73,7 +83,14 @@ export default function VisualDecoderLab() {
             </g>
           );
         })}
+        {!loading && glyphs.length === 0 ? (
+          <text x="12" y="24" fill="#6b7280" fontSize="14">
+            Нет глифов для отображения. Введите текст и нажмите Shape.
+          </text>
+        ) : null}
       </svg>
+
+      <p style={{ marginTop: 8, color: '#4b5563' }}>Кликните по глифу в SVG, чтобы увидеть связанные edu units.</p>
 
       <div style={{ marginTop: 12 }}>
         <strong>Selected glyph links:</strong>

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bash -c 'npm run dev:server & npm run dev:client; kill 0'",
+    "dev": "node scripts/dev-runner.mjs",
     "dev:client": "node node_modules/vite/bin/vite.js",
     "dev:server": "node server/server.cjs",
     "build": "node node_modules/vite/bin/vite.js build",
