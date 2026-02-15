@@ -130,11 +130,12 @@ async function shapeText(rawText, options = {}) {
 
     const components = [];
     let clusterAdvance = 0;
+    let clusterPenX = globalX;
 
     for (let i = 0; i < glyphRecords.length; i++) {
       const rec = glyphRecords[i];
       const { d, bb } = getGlyphPathAndBBox(rec.g);
-      const x = globalX + rec.dx;
+      const x = clusterPenX + rec.dx;
       const y = rec.dy;
 
       components.push({
@@ -147,6 +148,7 @@ async function shapeText(rawText, options = {}) {
         clusterIndex: i,  // порядковый номер в кластере
       });
 
+      clusterPenX += rec.ax;
       clusterAdvance += rec.ax;
     }
 
