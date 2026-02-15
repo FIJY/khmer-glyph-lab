@@ -13,7 +13,7 @@ export default function VisualDecoderLab() {
   const [didAutoload, setDidAutoload] = useState(false);
   const [disableLigatures, setDisableLigatures] = useState(false);
   const [features, setFeatures] = useState('');
-  const [clusterLevel, setClusterLevel] = useState(2); // по умолчанию 2 для максимального разделения
+  const [clusterLevel, setClusterLevel] = useState(0); // по умолчанию 0, чтобы сохранять корректный порядок кхмерских знаков
   const [enableSegmentation, setEnableSegmentation] = useState(true);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
@@ -43,6 +43,8 @@ export default function VisualDecoderLab() {
         return '#111';
     }
   }
+
+  const SPLIT_DEPENDENT_VOWELS = new Set([0x17c5]); // ◌ៅ содержит левую и правую визуальные части
 
   // Вычисляем parts для каждого глифа на основе components или геометрии
   const glyphsWithParts = useMemo(() => {
@@ -81,31 +83,53 @@ export default function VisualDecoderLab() {
         }
 
         // Иначе - разные компоненты, создаём parts по символам
+        // ВАЖНО: у кхмерского pre-base гласного компонент может идти ПЕРЕД базовой согласной.
+        // Поэтому нельзя жёстко привязывать "согласная=первый", "гласная=последний".
+        const usedComponentIndexes = new Set();
+        const getComponentArea = (component) => {
+          if (!component?.bb) return 0;
+          return Math.max(0, (component.bb.x2 - component.bb.x1) * (component.bb.y2 - component.bb.y1));
+        };
+
+        const pickComponentIndex = (category, fallbackIndex) => {
+          const candidates = glyph.components
+            .map((component, index) => ({ component, index, area: getComponentArea(component) }))
+            .filter(({ index }) => !usedComponentIndexes.has(index));
+
+          if (candidates.length === 0) return Math.min(fallbackIndex, glyph.components.length - 1);
+
+          if (category === 'base_consonant' || category === 'independent_vowel') {
+            // База обычно самый "крупный" компонент
+            candidates.sort((a, b) => b.area - a.area);
+            return candidates[0].index;
+          }
+
+          if (category === 'dependent_vowel' || category === 'diacritic_sign' || category === 'diacritic') {
+            // Зависимые знаки чаще всего компактнее базы
+            candidates.sort((a, b) => a.area - b.area);
+            return candidates[0].index;
+          }
+
+          if (category === 'subscript_consonant' || category === 'coeng') {
+            // Подписные элементы часто ниже базовой линии
+            candidates.sort((a, b) => (a.component?.bb?.y1 ?? 0) - (b.component?.bb?.y1 ?? 0));
+            return candidates[0].index;
+          }
+
+          return candidates[0].index;
+        };
+
         const parts = glyph.chars.map((char, charIdx) => {
           const category = getCategoryForChar(char);
           const color = getColorForCategory(category);
 
-          // Ищем компонент который соответствует этому символу
-          // Эвристика: согласные обычно первый компонент, гласные - последний
-          let component = null;
-
-          if (category === 'base_consonant' || category === 'independent_vowel') {
-            // Берём первый компонент (согласная обычно в начале)
-            component = glyph.components[0];
-          } else if (category === 'dependent_vowel') {
-            // Берём последний компонент (гласная обычно добавляется последней)
-            component = glyph.components[glyph.components.length - 1];
-          } else if (category === 'subscript_consonant') {
-            // Подписные согласные обычно в середине или в конце
-            component = glyph.components[Math.min(1, glyph.components.length - 1)];
-          } else {
-            // Для остальных - берём по индексу или первый
-            component = glyph.components[Math.min(charIdx, glyph.components.length - 1)];
-          }
+          const selectedIndex = pickComponentIndex(category, charIdx);
+          usedComponentIndexes.add(selectedIndex);
+          const component = glyph.components[selectedIndex];
 
           return {
             partId: `${glyph.id}-${charIdx}`,
-            component: component,
+            component,
             char,
             category,
             color,
@@ -113,6 +137,41 @@ export default function VisualDecoderLab() {
             hbGlyphId: component?.hbGlyphId,
           };
         });
+
+        // Спец-случай: некоторые гласные (например ◌ៅ) визуально занимают 2 зоны.
+        // Правая часть может остаться внутри базового компонента — вырезаем её отдельно и красим как гласную.
+        const dependentPart = parts.find((part) => part.category === 'dependent_vowel');
+        const basePart = parts.find((part) => part.category === 'base_consonant' || part.category === 'independent_vowel');
+        const dependentCp = dependentPart?.char?.codePointAt(0);
+
+        if (enableSegmentation && dependentPart && basePart && SPLIT_DEPENDENT_VOWELS.has(dependentCp) && basePart.component?.bb) {
+          const bb = basePart.component.bb;
+          const width = bb.x2 - bb.x1;
+          const rightStart = bb.x1 + width * 0.82;
+
+          basePart.clipRect = {
+            x: bb.x1,
+            y: bb.y1,
+            width: rightStart - bb.x1,
+            height: bb.y2 - bb.y1,
+          };
+
+          parts.push({
+            partId: `${glyph.id}-vowel-right`,
+            component: basePart.component,
+            char: dependentPart.char,
+            category: dependentPart.category,
+            color: dependentPart.color,
+            zone: 'component-vowel-right',
+            hbGlyphId: basePart.component?.hbGlyphId,
+            clipRect: {
+              x: rightStart,
+              y: bb.y1,
+              width: bb.x2 - rightStart,
+              height: bb.y2 - bb.y1,
+            },
+          });
+        }
 
         return { ...glyph, parts };
       } else {
@@ -292,6 +351,37 @@ export default function VisualDecoderLab() {
                   const compX = 50 + part.component.x * SCALE;
                   const compY = BASELINE_Y + part.component.y * SCALE;
                   pathData = part.component.d;
+                  if (part.clipRect) {
+                    const clipId = `clip-${part.partId}`;
+                    const cr = part.clipRect;
+                    return (
+                      <g key={part.partId}>
+                        <defs>
+                          <clipPath id={clipId}>
+                            <rect x={cr.x} y={cr.y} width={cr.width} height={cr.height} />
+                          </clipPath>
+                        </defs>
+                        <g
+                          onClick={() => {
+                            setSelectedPartKey(part.partId);
+                            console.log('[SELECTED PART]', part);
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <path
+                            d={pathData}
+                            fill={isSelected ? '#3b82f6' : part.color}
+                            transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${compX}, ${compY})`}
+                            clipPath={`url(#${clipId})`}
+                            stroke={isSelected ? '#1d4ed8' : 'none'}
+                            strokeWidth={isSelected ? '30' : '0'}
+                            opacity={0.9}
+                          />
+                        </g>
+                      </g>
+                    );
+                  }
+
                   return (
                     <g
                       key={part.partId}
