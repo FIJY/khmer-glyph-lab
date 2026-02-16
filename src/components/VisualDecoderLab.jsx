@@ -110,11 +110,18 @@ export default function VisualDecoderLab() {
     return glyphs.map(glyph => {
       // Если у глифа есть компоненты от сервера, проверяем их
       if (glyph.components && glyph.components.length > 0) {
-        // ПРОВЕРКА: Если все компоненты имеют одинаковый hbGlyphId - это составной глиф!
-        // В этом случае нужна геометрическая сегментация
+        // ПРОВЕРКА: если у кластера реально только ОДИН компонент, но несколько символов,
+        // это «слитный» контур и нам приходится делать fallback на геометрическое разрезание.
+        //
+        // ВАЖНО: если компонентов несколько (даже с одинаковым hbGlyphId),
+        // лучше использовать component-based mapping, иначе геометрия ломает сложные кхмерские случаи.
         const uniqueGlyphIds = new Set(glyph.components.map(c => c.hbGlyphId));
+        const shouldUseGeometryFallback =
+          uniqueGlyphIds.size === 1 &&
+          glyph.chars.length > 1 &&
+          glyph.components.length === 1;
 
-        if (uniqueGlyphIds.size === 1 && glyph.chars.length > 1) {
+        if (shouldUseGeometryFallback) {
           // Все компоненты одинаковые и есть несколько символов
           // → Используем геометрическую сегментацию!
           console.log('[PARTS] Glyph', glyph.id, '- composite glyph detected, using SIMPLE clip-path segmentation');

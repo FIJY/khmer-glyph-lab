@@ -5,43 +5,76 @@ import {
   isKhmerDiacriticOrSign
 } from './khmerClassifier.js';
 
-function splitTokenToAtoms(token) {
+function splitTokenToAtoms(token, tokenStart = 0) {
   const chars = Array.from(token);
   const units = [];
+  let localOffset = 0;
+
   for (let i = 0; i < chars.length; i += 1) {
     const ch = chars[i];
     const category = getKhmerGlyphCategory(ch, chars[i - 1]);
 
     if (category === 'coeng' && chars[i + 1] && isKhmerConsonantChar(chars[i + 1])) {
       const combined = ch + chars[i + 1];
+      const combinedStart = tokenStart + localOffset;
+      const combinedLen = ch.length + chars[i + 1].length;
+
       units.push({
         text: combined,
         chars: Array.from(combined),
         codePoints: Array.from(combined).map((c) => c.codePointAt(0)),
-        category: 'subscript_consonant'
+        category: 'subscript_consonant',
+        sourceStart: combinedStart,
+        sourceEnd: combinedStart + combinedLen
       });
+
+      localOffset += combinedLen;
       i += 1;
       continue;
     }
 
+    const chStart = tokenStart + localOffset;
+    const baseUnit = {
+      text: ch,
+      chars: [ch],
+      codePoints: [ch.codePointAt(0)],
+      sourceStart: chStart,
+      sourceEnd: chStart + ch.length
+    };
+
     if (isKhmerDependentVowel(ch)) {
-      units.push({ text: ch, chars: [ch], codePoints: [ch.codePointAt(0)], category: 'dependent_vowel' });
+      units.push({ ...baseUnit, category: 'dependent_vowel' });
+      localOffset += ch.length;
       continue;
     }
 
     if (isKhmerDiacriticOrSign(ch)) {
-      units.push({ text: ch, chars: [ch], codePoints: [ch.codePointAt(0)], category: 'diacritic_sign' });
+      units.push({ ...baseUnit, category: 'diacritic_sign' });
+      localOffset += ch.length;
       continue;
     }
 
-    units.push({ text: ch, chars: [ch], codePoints: [ch.codePointAt(0)], category });
+    units.push({ ...baseUnit, category });
+    localOffset += ch.length;
   }
+
   return units;
 }
 
 export function buildEduUnits(text, charSplit) {
-  const source = Array.isArray(charSplit) && charSplit.length ? charSplit : [text || ''];
-  const atoms = source.flatMap((token) => splitTokenToAtoms(token));
+  const sourceText = text || '';
+  const source = Array.isArray(charSplit) && charSplit.length ? charSplit : [sourceText];
+
+  let cursor = 0;
+  const atoms = source.flatMap((token) => {
+    const strToken = token || '';
+    const foundAt = sourceText.indexOf(strToken, cursor);
+    const tokenStart = foundAt >= 0 ? foundAt : cursor;
+    const tokenUnits = splitTokenToAtoms(strToken, tokenStart);
+    cursor = tokenStart + strToken.length;
+    return tokenUnits;
+  });
+
   return atoms.map((unit, index) => ({ ...unit, id: `edu-${index}` }));
 }
 
