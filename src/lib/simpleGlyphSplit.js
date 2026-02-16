@@ -135,6 +135,16 @@ function getPositionsForUnit(unit) {
   return unique(pos);
 }
 
+function isUnitInsideGlyphCluster(unit, glyph) {
+  const hasUnitRange = Number.isInteger(unit?.sourceStart) && Number.isInteger(unit?.sourceEnd);
+  const hasGlyphRange = Number.isInteger(glyph?.clusterStart) && Number.isInteger(glyph?.clusterEnd);
+
+  if (!hasUnitRange || !hasGlyphRange) return true;
+
+  // overlap check: [start, end)
+  return unit.sourceStart < glyph.clusterEnd && unit.sourceEnd > glyph.clusterStart;
+}
+
 function getCategoryPriority(category) {
   // больше = выше приоритет в наложении
   switch (category) {
@@ -163,9 +173,10 @@ export function createClipPathParts(glyph, units) {
   if (!glyph?.d || !glyph?.bb) return [];
 
   const glyphCps = new Set(glyph.codePoints || []);
-  const relevantUnits = (units || []).filter((u) =>
-    (u.codePoints || []).some((cp) => glyphCps.has(cp))
-  );
+  const relevantUnits = (units || []).filter((u) => {
+    const codePointHit = (u.codePoints || []).some((cp) => glyphCps.has(cp));
+    return codePointHit && isUnitInsideGlyphCluster(u, glyph);
+  });
 
   if (relevantUnits.length === 0) return [];
 
