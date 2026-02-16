@@ -5,7 +5,12 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ffd5a1ef-38ea-43ce-bbd5-2523ffa3d46a" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/src/lib/clusterPatternEngine.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/components/VisualDecoderLab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/components/VisualDecoderLab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/lib/eduUnits.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib/eduUnits.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/lib/glyphCombinationRules.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib/glyphCombinationRules.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/lib/glyphPartMapper.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib/glyphPartMapper.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/lib/simpleGlyphSplit.js" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib/simpleGlyphSplit.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />

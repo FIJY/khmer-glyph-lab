@@ -7,13 +7,15 @@ const DEBUG = Boolean(globalThis.window?.__EDU_DEBUG__);
 export default function VisualDecoderLab() {
   const [text, setText] = useState("កៅ");
   const [glyphs, setGlyphs] = useState([]);
-  const [selectedPartKey, setSelectedPartKey] = useState(null); // glyphId-partIdx (или glyphId-componentIdx)
+  // ИЗМЕНЕНО: храним glyphId и char для группового выделения частей
+  const [selectedGlyphId, setSelectedGlyphId] = useState(null);
+  const [selectedChar, setSelectedChar] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [didAutoload, setDidAutoload] = useState(false);
   const [disableLigatures, setDisableLigatures] = useState(false);
   const [features, setFeatures] = useState('');
-  const [clusterLevel, setClusterLevel] = useState(0); // по умолчанию 0 для корректного рендеринга слова
+  const [clusterLevel, setClusterLevel] = useState(0);
   const [enableSegmentation, setEnableSegmentation] = useState(true);
   const [fontOptions, setFontOptions] = useState([]);
   const [selectedFont, setSelectedFont] = useState('auto');
@@ -43,7 +45,8 @@ export default function VisualDecoderLab() {
   async function handleShape() {
     setLoading(true);
     setError("");
-    setSelectedPartKey(null);
+    setSelectedGlyphId(null);
+    setSelectedChar(null);
 
     try {
       let url = `http://localhost:3001/api/shape?text=${encodeURIComponent(text)}`;
@@ -252,7 +255,8 @@ export default function VisualDecoderLab() {
           return (
             <g key={glyph.id}>
               {glyph.parts.map((part) => {
-                const isSelected = selectedPartKey === part.partId;
+                // ИЗМЕНЕНО: выделяем ВСЕ части с тем же char в этом глифе
+                const isSelected = glyph.id === selectedGlyphId && part.char === selectedChar;
                 // Для частей из компонентов используем их x, y; для геометрических - позицию глифа
                 let xPos, yPos, pathData;
                 if (part.component) {
@@ -276,8 +280,9 @@ export default function VisualDecoderLab() {
                         </defs>
                         <g
                           onClick={() => {
-                            setSelectedPartKey(part.partId);
-                            console.log('[SELECTED PART]', part);
+                            setSelectedGlyphId(glyph.id);
+                            setSelectedChar(part.char);
+                            console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
                           }}
                           style={{ cursor: 'pointer' }}
                         >
@@ -299,8 +304,9 @@ export default function VisualDecoderLab() {
                     <g
                       key={part.partId}
                       onClick={() => {
-                        setSelectedPartKey(part.partId);
-                        console.log('[SELECTED PART]', part);
+                        setSelectedGlyphId(glyph.id);
+                        setSelectedChar(part.char);
+                        console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
                       }}
                       style={{ cursor: 'pointer' }}
                     >
@@ -339,8 +345,9 @@ export default function VisualDecoderLab() {
                         </defs>
                         <g
                           onClick={() => {
-                            setSelectedPartKey(part.partId);
-                            console.log('[SELECTED PART]', part);
+                            setSelectedGlyphId(glyph.id);
+                            setSelectedChar(part.char);
+                            console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
                           }}
                           style={{ cursor: 'pointer' }}
                         >
@@ -362,8 +369,9 @@ export default function VisualDecoderLab() {
                       <g
                         key={part.partId}
                         onClick={() => {
-                          setSelectedPartKey(part.partId);
-                          console.log('[SELECTED PART]', part);
+                          setSelectedGlyphId(glyph.id);
+                          setSelectedChar(part.char);
+                          console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
                         }}
                         style={{ cursor: 'pointer' }}
                       >
@@ -397,10 +405,10 @@ export default function VisualDecoderLab() {
       </svg>
 
       <p style={{ marginTop: 12, color: "#4b5563", fontSize: "14px" }}>
-        ✨ Кликните по части глифа чтобы увидеть информацию
+        ✨ Кликните по части глифа чтобы увидеть информацию (для составных гласных выделяются все части)
       </p>
 
-      {selectedPartKey && (
+      {selectedChar && selectedGlyphId !== null && (
         <div
           style={{
             marginTop: 16,
@@ -410,24 +418,37 @@ export default function VisualDecoderLab() {
             borderRadius: 4,
           }}
         >
-          <strong>Выбрана часть:</strong>
+          <strong>Выбран символ: {selectedChar}</strong>
           {(() => {
-            const [gId, pIdx] = selectedPartKey.split('-');
-            const glyph = glyphsWithParts.find(g => String(g.id) === gId);
+            const glyph = glyphsWithParts.find(g => g.id === selectedGlyphId);
             if (!glyph) return <p>Глиф не найден</p>;
 
-            const part = glyph.parts.find(p => p.partId === selectedPartKey);
-            if (!part) return <p>Часть не найдена</p>;
+            // Находим ВСЕ части с выбранным символом
+            const selectedParts = glyph.parts.filter(p => p.char === selectedChar);
+            if (selectedParts.length === 0) return <p>Части не найдены</p>;
 
             return (
               <div style={{ marginTop: 8 }}>
-                <p><strong>Символ:</strong> {part.char || '?'}</p>
-                <p><strong>Категория:</strong> {part.category}</p>
-                <p><strong>Зона:</strong> {part.zone}</p>
-                <p><strong>Цвет:</strong> <span style={{ color: part.color, fontWeight: 'bold' }}>■</span> {part.color}</p>
-                {part.component && (
-                  <p><small>Компонент глифа (ID: {part.component.hbGlyphId})</small></p>
-                )}
+                <p><strong>Количество частей:</strong> {selectedParts.length}</p>
+                {selectedParts.map((part, idx) => (
+                  <div key={part.partId} style={{
+                    marginTop: 8,
+                    paddingTop: 8,
+                    borderTop: idx > 0 ? '1px solid #ddd' : 'none'
+                  }}>
+                    <p><strong>Часть #{idx + 1}:</strong></p>
+                    <p style={{ marginLeft: 12 }}>
+                      <strong>Категория:</strong> {part.category}<br/>
+                      <strong>Зона:</strong> {part.zone}<br/>
+                      <strong>Цвет:</strong> <span style={{ color: part.color, fontWeight: 'bold' }}>■</span> {part.color}
+                    </p>
+                    {part.component && (
+                      <p style={{ marginLeft: 12, fontSize: '12px', color: '#666' }}>
+                        Компонент ID: {part.component.hbGlyphId}
+                      </p>
+                    )}
+                  </div>
+                ))}
               </div>
             );
           })()}

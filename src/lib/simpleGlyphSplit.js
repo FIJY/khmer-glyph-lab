@@ -175,8 +175,16 @@ export function createClipPathParts(glyph, units) {
   const glyphCps = new Set(glyph.codePoints || []);
   const relevantUnits = (units || []).filter((u) => {
     const codePointHit = (u.codePoints || []).some((cp) => glyphCps.has(cp));
-    return codePointHit && isUnitInsideGlyphCluster(u, glyph);
+    const inCluster = isUnitInsideGlyphCluster(u, glyph);
+    const combiningLike =
+      u?.category === 'coeng' ||
+      u?.category === 'dependent_vowel' ||
+      u?.category === 'diacritic_sign' ||
+      u?.category === 'diacritic';
+
+    return inCluster && (codePointHit || combiningLike);
   });
+
 
   if (relevantUnits.length === 0) return [];
 

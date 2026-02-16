@@ -12,23 +12,42 @@ function splitTokenToAtoms(token, tokenStart = 0) {
 
   for (let i = 0; i < chars.length; i += 1) {
     const ch = chars[i];
-    const category = getKhmerGlyphCategory(ch, chars[i - 1]);
+    const prev = chars[i - 1] || '';
+    const category = getKhmerGlyphCategory(ch, prev);
 
+    // v2: coeng + consonant => TWO units (coeng + subscript_consonant)
     if (category === 'coeng' && chars[i + 1] && isKhmerConsonantChar(chars[i + 1])) {
-      const combined = ch + chars[i + 1];
-      const combinedStart = tokenStart + localOffset;
-      const combinedLen = ch.length + chars[i + 1].length;
+      const nextCh = chars[i + 1];
 
+      const coengStart = tokenStart + localOffset;
+      const coengLen = ch.length;
+
+      // 1) coeng as standalone unit
       units.push({
-        text: combined,
-        chars: Array.from(combined),
-        codePoints: Array.from(combined).map((c) => c.codePointAt(0)),
-        category: 'subscript_consonant',
-        sourceStart: combinedStart,
-        sourceEnd: combinedStart + combinedLen
+        text: ch,
+        chars: [ch],
+        codePoints: [ch.codePointAt(0)],
+        category: 'coeng',
+        sourceStart: coengStart,
+        sourceEnd: coengStart + coengLen
       });
 
-      localOffset += combinedLen;
+      localOffset += coengLen;
+
+      const subStart = tokenStart + localOffset;
+      const subLen = nextCh.length;
+
+      // 2) following consonant as subscript_consonant
+      units.push({
+        text: nextCh,
+        chars: [nextCh],
+        codePoints: [nextCh.codePointAt(0)],
+        category: 'subscript_consonant',
+        sourceStart: subStart,
+        sourceEnd: subStart + subLen
+      });
+
+      localOffset += subLen;
       i += 1;
       continue;
     }
