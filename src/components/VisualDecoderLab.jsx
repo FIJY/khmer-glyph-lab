@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { buildEduUnits } from "../lib/eduUnits.js";
 import { mapGlyphsToParts } from "../lib/glyphPartMapper.js";
+import { loadMetrics, isMetricsLoaded, getRawMetrics } from "../lib/khmerConsonantMetrics.js";
 
 const DEBUG = Boolean(globalThis.window?.__EDU_DEBUG__);
 
 export default function VisualDecoderLab() {
   const [text, setText] = useState("កៅ");
   const [glyphs, setGlyphs] = useState([]);
-  // ИЗМЕНЕНО: храним glyphId и char для группового выделения частей
   const [selectedGlyphId, setSelectedGlyphId] = useState(null);
   const [selectedChar, setSelectedChar] = useState(null);
   const [error, setError] = useState("");
@@ -15,17 +15,26 @@ export default function VisualDecoderLab() {
   const [didAutoload, setDidAutoload] = useState(false);
   const [disableLigatures, setDisableLigatures] = useState(false);
   const [features, setFeatures] = useState('');
-  const [clusterLevel, setClusterLevel] = useState(0);
+  const [clusterLevel, setClusterLevel] = useState(1);
   const [enableSegmentation, setEnableSegmentation] = useState(true);
   const [fontOptions, setFontOptions] = useState([]);
   const [selectedFont, setSelectedFont] = useState('auto');
+  const [metricsReady, setMetricsReady] = useState(false);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
 
-  // Вычисляем parts для каждого глифа на основе централизованного маппера
   const glyphsWithParts = useMemo(() => {
     return mapGlyphsToParts(glyphs, units, { enableSegmentation });
-  }, [glyphs, units, enableSegmentation]);
+    // metricsReady в зависимостях — чтобы пересчитать после загрузки метрик
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [glyphs, units, enableSegmentation, metricsReady]);
+
+  // ── Загружаем метрики при смене шрифта ───────────────────────────────────
+  async function fetchMetrics(fontId) {
+    setMetricsReady(false);
+    await loadMetrics(fontId);
+    setMetricsReady(isMetricsLoaded());
+  }
 
   async function loadFonts() {
     try {
@@ -34,9 +43,6 @@ export default function VisualDecoderLab() {
       const payload = await response.json();
       const fonts = Array.isArray(payload.fonts) ? payload.fonts : [];
       setFontOptions(fonts);
-      if (payload.defaultFontId && selectedFont === 'auto') {
-        // 'auto' оставляем как явный режим, не переопределяем выбор пользователя
-      }
     } catch (fontError) {
       console.warn('[fonts] failed to load fonts', fontError);
     }
@@ -50,14 +56,8 @@ export default function VisualDecoderLab() {
 
     try {
       let url = `http://localhost:3001/api/shape?text=${encodeURIComponent(text)}`;
-
-      if (clusterLevel !== 0) {
-        url += `&clusterLevel=${clusterLevel}`;
-      }
-
-      if (selectedFont && selectedFont !== 'auto') {
-        url += `&font=${encodeURIComponent(selectedFont)}`;
-      }
+      if (clusterLevel !== 0) url += `&clusterLevel=${clusterLevel}`;
+      if (selectedFont && selectedFont !== 'auto') url += `&font=${encodeURIComponent(selectedFont)}`;
 
       if (disableLigatures) {
         url += '&features=liga:0,ccmp:0,pres:0,abvs:0,psts:0';
@@ -74,21 +74,41 @@ export default function VisualDecoderLab() {
       }
       const data = await response.json();
       if (DEBUG) console.log("[EDU_DEBUG] glyphs", data);
-      console.log("[GLYPHS]", data);
-      setGlyphs(Array.isArray(data) ? data : []);
-    } catch (shapeError) {
-      setError(`Shape API error: ${shapeError.message}. Проверьте сервер.`);
-      setGlyphs([]);
+      console.log("[GLYPHS RAW]", data);
+
+      const shapedGlyphs =
+        (Array.isArray(data) && data) ||
+        (Array.isArray(data?.glyphs) && data.glyphs) ||
+        (Array.isArray(data?.run?.glyphs) && data.run.glyphs) ||
+        (Array.isArray(data?.result?.glyphs) && data.result.glyphs) ||
+        [];
+
+      console.log("[GLYPHS PARSED]", {
+        count: shapedGlyphs.length,
+        first: shapedGlyphs[0] || null,
+        keys: data && typeof data === "object" ? Object.keys(data) : null,
+      });
+
+      setGlyphs(shapedGlyphs);
     } finally {
       setLoading(false);
     }
   }
 
+  // Обработчик смены шрифта — загружает метрики и перешейпит
+  async function handleFontChange(newFontId) {
+    setSelectedFont(newFontId);
+    await fetchMetrics(newFontId);
+  }
+
   useEffect(() => {
     if (didAutoload) return;
     setDidAutoload(true);
-    loadFonts();
-    handleShape();
+    Promise.all([
+      loadFonts(),
+      fetchMetrics('auto'),
+      handleShape(),
+    ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [didAutoload]);
 
@@ -111,26 +131,20 @@ export default function VisualDecoderLab() {
 
     const pushBounds = (offsetY, bb) => {
       if (!bb) return;
-      const top = (offsetY + (bb.y1 || 0)) * SCALE;
+      const top    = (offsetY + (bb.y1 || 0)) * SCALE;
       const bottom = (offsetY + (bb.y2 || 0)) * SCALE;
-
       minRelativeY = Math.min(minRelativeY, top, bottom);
       maxRelativeY = Math.max(maxRelativeY, top, bottom);
     };
 
     for (const glyph of glyphsWithParts) {
-      // 1) Границы реально отрисовываемых частей
       for (const part of glyph.parts || []) {
         const source = part.component || glyph;
         pushBounds(source?.y || 0, source?.bb);
       }
-
-      // 2) Границы всех серверных компонентов (на случай, если часть не замапилась)
       for (const component of glyph.components || []) {
         pushBounds(component?.y || 0, component?.bb);
       }
-
-      // 3) Фолбэк на bbox самого глифа
       pushBounds(glyph.y || 0, glyph.bb);
     }
 
@@ -168,16 +182,10 @@ export default function VisualDecoderLab() {
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#f3f4f6', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input
-              type="checkbox"
-              checked={disableLigatures}
-              onChange={(e) => setDisableLigatures(e.target.checked)}
-            />
+            <input type="checkbox" checked={disableLigatures} onChange={(e) => setDisableLigatures(e.target.checked)} />
             <span style={{ fontSize: '14px' }}>🔧 Отключить лигатуры</span>
           </label>
-
           <span style={{ color: '#9ca3af' }}>или</span>
-
           <input
             value={features}
             onChange={(e) => setFeatures(e.target.value)}
@@ -190,24 +198,17 @@ export default function VisualDecoderLab() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#eff6ff', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span style={{ fontSize: '14px', fontWeight: 'bold' }}>⚙️ Cluster Level:</span>
-            <select
-              value={clusterLevel}
-              onChange={(e) => setClusterLevel(parseInt(e.target.value, 10))}
-              style={{ padding: '6px', fontSize: '14px' }}
-            >
+            <select value={clusterLevel} onChange={(e) => setClusterLevel(parseInt(e.target.value, 10))} style={{ padding: '6px', fontSize: '14px' }}>
               <option value={0}>0 - Default</option>
               <option value={1}>1 - Monotone graphemes</option>
               <option value={2}>2 - Monotone characters</option>
             </select>
           </label>
-        </div>
-
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fef9c3', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔤 Шрифт:</span>
             <select
               value={selectedFont}
-              onChange={(e) => setSelectedFont(e.target.value)}
+              onChange={(e) => handleFontChange(e.target.value)}
               style={{ padding: '6px', fontSize: '14px' }}
             >
               <option value="auto">Auto (первый доступный)</option>
@@ -217,23 +218,20 @@ export default function VisualDecoderLab() {
                 </option>
               ))}
             </select>
+            {/* Индикатор загрузки метрик */}
+            <span style={{ fontSize: '12px', color: metricsReady ? '#16a34a' : '#d97706' }}>
+              {metricsReady ? '✅ метрики загружены' : '⏳ загрузка метрик…'}
+            </span>
           </label>
-          <span style={{ fontSize: '12px', color: '#92400e' }}>
-            Доступные шрифты можно выбрать сразу, недоступные помечены в списке
-          </span>
         </div>
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#dcfce7', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input
-              type="checkbox"
-              checked={enableSegmentation}
-              onChange={(e) => setEnableSegmentation(e.target.checked)}
-            />
+            <input type="checkbox" checked={enableSegmentation} onChange={(e) => setEnableSegmentation(e.target.checked)} />
             <span style={{ fontSize: '14px', fontWeight: 'bold' }}>✂️ Визуальная сегментация глифов</span>
           </label>
           <span style={{ fontSize: '12px', color: '#16a34a' }}>
-            Разделяет составные глифы на части по геометрии (если нет компонент от сервера)!
+            Разделяет составные глифы на части по геометрии (если нет компонент от сервера)
           </span>
         </div>
       </div>
@@ -250,203 +248,103 @@ export default function VisualDecoderLab() {
         <line x1="0" y1={verticalLayout.ascenderLineY} x2={width} y2={verticalLayout.ascenderLineY} stroke="#e5e7eb" strokeDasharray="2 2" />
         <line x1="0" y1={verticalLayout.descenderLineY} x2={width} y2={verticalLayout.descenderLineY} stroke="#e5e7eb" strokeDasharray="2 2" />
 
-        {glyphsWithParts.map((glyph) => {
-          // Рендерим части (parts) этого глифа
-          return (
-            <g key={glyph.id}>
-              {glyph.parts.map((part) => {
-                // ИЗМЕНЕНО: выделяем ВСЕ части с тем же char в этом глифе
-                const isSelected = glyph.id === selectedGlyphId && part.char === selectedChar;
-                // Для частей из компонентов используем их x, y; для геометрических - позицию глифа
-                let xPos, yPos, pathData;
-                if (part.component) {
-                  // Часть из компонента сервера
-                  xPos = part.component.x * SCALE + 50;
-                  yPos = verticalLayout.baselineY;
-                  const compX = 50 + part.component.x * SCALE;
-                  const compY = verticalLayout.baselineY + part.component.y * SCALE;
-                  pathData = part.component.d;
+        {glyphsWithParts.map((glyph) => (
+          <g key={glyph.id}>
+            {glyph.parts.map((part) => {
+              const isSelected = glyph.id === selectedGlyphId && part.char === selectedChar;
 
-                  if (part.clipRect) {
-                    const clipId = `clip-${part.partId}`;
-                    const cr = part.clipRect;
+              let xPos, yPos, pathData;
+              if (part.component) {
+                xPos = 50 + part.component.x * SCALE;
+                yPos = verticalLayout.baselineY + part.component.y * SCALE;
+                pathData = part.component.d;
+              } else {
+                xPos = 50 + glyph.x * SCALE;
+                yPos = verticalLayout.baselineY + glyph.y * SCALE;
+                pathData = part.pathData || glyph.d;
+              }
 
-                    return (
-                      <g key={part.partId}>
-                        <defs>
-                          <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
-                            <rect x={cr.x} y={cr.y} width={cr.width} height={cr.height} />
-                          </clipPath>
-                        </defs>
-                        <g
-                          onClick={() => {
-                            setSelectedGlyphId(glyph.id);
-                            setSelectedChar(part.char);
-                            console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
-                          }}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          <path
-                            d={pathData}
-                            fill={isSelected ? '#3b82f6' : part.color}
-                            transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${compX}, ${compY})`}
-                            clipPath={`url(#${clipId})`}
-                            stroke={isSelected ? '#1d4ed8' : 'none'}
-                            strokeWidth={isSelected ? '30' : '0'}
-                            opacity={0.9}
-                          />
-                        </g>
-                      </g>
-                    );
-                  }
+              const cr = part.clipRect;
+              const isClipValid = cr &&
+                Number.isFinite(cr.x) && Number.isFinite(cr.y) &&
+                Number.isFinite(cr.width) && Number.isFinite(cr.height);
 
-                  return (
-                    <g
-                      key={part.partId}
-                      onClick={() => {
-                        setSelectedGlyphId(glyph.id);
-                        setSelectedChar(part.char);
-                        console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
-                      }}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <path
-                        d={pathData}
-                        fill={isSelected ? '#3b82f6' : part.color}
-                        transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${compX}, ${compY})`}
-                        stroke={isSelected ? '#1d4ed8' : 'none'}
-                        strokeWidth={isSelected ? '30' : '0'}
-                        opacity={0.9}
+              const clipId = `clip-${part.partId}`;
+
+              return (
+                <g key={part.partId}>
+                  <defs>
+                    {isClipValid && (
+                      <clipPath id={clipId}>
+                        <rect x={cr.x} y={cr.y} width={cr.width} height={cr.height} />
+                      </clipPath>
+                    )}
+                  </defs>
+                  <g
+                    onClick={() => {
+                      setSelectedGlyphId(glyph.id);
+                      setSelectedChar(part.char);
+                      console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <path
+                      d={pathData}
+                      fill={isSelected ? '#3b82f6' : part.color}
+                      transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${xPos}, ${yPos})`}
+                      clipPath={isClipValid ? `url(#${clipId})` : undefined}
+                      stroke={isSelected ? '#1d4ed8' : 'none'}
+                      strokeWidth={isSelected ? '30' : '0'}
+                      opacity={0.9}
+                    />
+                    {isClipValid && (
+                      <rect
+                        x={cr.x} y={cr.y} width={cr.width} height={cr.height}
+                        fill="none" stroke="red" strokeWidth="15" strokeDasharray="40,20"
+                        transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${xPos}, ${yPos})`}
+                        pointerEvents="none"
                       />
-                    </g>
-                  );
-                } else {
-                  // Часть из геометрической сегментации или целый глиф
-                  xPos = glyph.x * SCALE + 50;
-                  yPos = verticalLayout.baselineY + glyph.y * SCALE;
-                  pathData = part.pathData || glyph.d;
+                    )}
+                  </g>
+                </g>
+              );
+            })}
+            <text x={glyph.x * SCALE + 50} y={verticalLayout.labelY} fontSize="12" fill="#6b7280" textAnchor="middle">
+              #{glyph.id} ({glyph.parts.length} part{glyph.parts.length !== 1 ? 's' : ''})
+            </text>
+          </g>
+        ))}
 
-                  // Если есть clipRect - используем его для маскирования
-                  if (part.clipRect) {
-                    const clipId = `clip-${part.partId}`;
-                    const cr = part.clipRect;
-
-                    return (
-                      <g key={part.partId}>
-                        <defs>
-                          <clipPath id={clipId}>
-                            <rect
-                              x={cr.x}
-                              y={cr.y}
-                              width={cr.width}
-                              height={cr.height}
-                            />
-                          </clipPath>
-                        </defs>
-                        <g
-                          onClick={() => {
-                            setSelectedGlyphId(glyph.id);
-                            setSelectedChar(part.char);
-                            console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
-                          }}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          <path
-                            d={pathData}
-                            fill={isSelected ? '#3b82f6' : part.color}
-                            transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${xPos}, ${yPos})`}
-                            clipPath={`url(#${clipId})`}
-                            stroke={isSelected ? '#1d4ed8' : 'none'}
-                            strokeWidth={isSelected ? '30' : '0'}
-                            opacity={0.9}
-                          />
-                        </g>
-                      </g>
-                    );
-                  } else {
-                    // Обычный рендеринг без clip
-                    return (
-                      <g
-                        key={part.partId}
-                        onClick={() => {
-                          setSelectedGlyphId(glyph.id);
-                          setSelectedChar(part.char);
-                          console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
-                        }}
-                        style={{ cursor: 'pointer' }}
-                      >
-                        <path
-                          d={pathData}
-                          fill={isSelected ? '#3b82f6' : part.color}
-                          transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${xPos}, ${yPos})`}
-                          stroke={isSelected ? '#1d4ed8' : 'none'}
-                          strokeWidth={isSelected ? '30' : '0'}
-                          opacity={0.9}
-                        />
-                      </g>
-                    );
-                  }
-                }
-              })}
-
-              {/* Подпись под глифом */}
-              <text x={glyph.x * SCALE + 50} y={verticalLayout.labelY} fontSize="12" fill="#6b7280" textAnchor="middle">
-                #{glyph.id} ({glyph.parts.length} part{glyph.parts.length !== 1 ? 's' : ''})
-              </text>
-            </g>
-          );
-        })}
-
-        {!loading && glyphs.length === 0 ? (
+        {!loading && glyphs.length === 0 && (
           <text x="50" y="200" fill="#6b7280" fontSize="16">
             Нет глифов для отображения. Введите текст и нажмите Shape.
           </text>
-        ) : null}
+        )}
       </svg>
 
       <p style={{ marginTop: 12, color: "#4b5563", fontSize: "14px" }}>
-        ✨ Кликните по части глифа чтобы увидеть информацию (для составных гласных выделяются все части)
+        ✨ Кликните по части глифа чтобы увидеть информацию
       </p>
 
       {selectedChar && selectedGlyphId !== null && (
-        <div
-          style={{
-            marginTop: 16,
-            padding: 12,
-            background: "#eff6ff",
-            border: "1px solid #3b82f6",
-            borderRadius: 4,
-          }}
-        >
+        <div style={{ marginTop: 16, padding: 12, background: "#eff6ff", border: "1px solid #3b82f6", borderRadius: 4 }}>
           <strong>Выбран символ: {selectedChar}</strong>
           {(() => {
             const glyph = glyphsWithParts.find(g => g.id === selectedGlyphId);
             if (!glyph) return <p>Глиф не найден</p>;
-
-            // Находим ВСЕ части с выбранным символом
             const selectedParts = glyph.parts.filter(p => p.char === selectedChar);
             if (selectedParts.length === 0) return <p>Части не найдены</p>;
-
             return (
               <div style={{ marginTop: 8 }}>
                 <p><strong>Количество частей:</strong> {selectedParts.length}</p>
                 {selectedParts.map((part, idx) => (
-                  <div key={part.partId} style={{
-                    marginTop: 8,
-                    paddingTop: 8,
-                    borderTop: idx > 0 ? '1px solid #ddd' : 'none'
-                  }}>
+                  <div key={part.partId} style={{ marginTop: 8, paddingTop: 8, borderTop: idx > 0 ? '1px solid #ddd' : 'none' }}>
                     <p><strong>Часть #{idx + 1}:</strong></p>
                     <p style={{ marginLeft: 12 }}>
-                      <strong>Категория:</strong> {part.category}<br/>
-                      <strong>Зона:</strong> {part.zone}<br/>
+                      <strong>Категория:</strong> {part.category}<br />
+                      <strong>Зона:</strong> {part.zone}<br />
                       <strong>Цвет:</strong> <span style={{ color: part.color, fontWeight: 'bold' }}>■</span> {part.color}
                     </p>
-                    {part.component && (
-                      <p style={{ marginLeft: 12, fontSize: '12px', color: '#666' }}>
-                        Компонент ID: {part.component.hbGlyphId}
-                      </p>
-                    )}
                   </div>
                 ))}
               </div>
@@ -464,21 +362,27 @@ export default function VisualDecoderLab() {
           <pre style={{ fontSize: "11px", overflow: "auto", maxHeight: "300px", background: "#fff", padding: 8 }}>
             {JSON.stringify(glyphsWithParts.map(g => ({
               id: g.id,
-              chars: g.chars,
               parts: g.parts.map(p => ({
-                char: p.char,
-                category: p.category,
-                zone: p.zone,
-                color: p.color,
-                hbGlyphId: p.component?.hbGlyphId,
+                char: p.char, category: p.category,
+                zone: p.zone, color: p.color,
+                validClip: p.clipRect ? 'YES' : 'NO'
               }))
             })), null, 2)}
           </pre>
 
-          <h4>EduUnits ({units.length})</h4>
-          <pre style={{ fontSize: "11px", overflow: "auto", maxHeight: "200px", background: "#fff", padding: 8 }}>
-            {JSON.stringify(units, null, 2)}
-          </pre>
+          {/* Metrics debug */}
+          <h4>Font Metrics {metricsReady ? '✅' : '⏳'}</h4>
+          {metricsReady && (
+            <pre style={{ fontSize: "11px", overflow: "auto", maxHeight: "200px", background: "#fff", padding: 8 }}>
+              {JSON.stringify({
+                unitsPerEm: getRawMetrics()?.unitsPerEm,
+                consonantsCount: Object.keys(getRawMetrics()?.consonants ?? {}).length,
+                subscriptsCount: Object.keys(getRawMetrics()?.subscripts ?? {}).length,
+                vowelsCount: Object.keys(getRawMetrics()?.vowels ?? {}).length,
+                diacriticsCount: Object.keys(getRawMetrics()?.diacritics ?? {}).length,
+              }, null, 2)}
+            </pre>
+          )}
         </div>
       </details>
     </section>

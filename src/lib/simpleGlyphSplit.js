@@ -1,266 +1,181 @@
-// src/lib/simpleGlyphSplit.js
-
-import { getSymbolPositions, CATEGORY_COLORS } from "./khmerPositions.js";
-
-/**
- * bbox в координатах шрифта:
- * x1 = left, x2 = right
- * y1 = bottom, y2 = top
- */
+import { getColorForCategory } from './glyphCombinationRules.js';
+import {
+  getConsonantBodyRect,
+  computeZonesFromMetrics,
+  isMetricsLoaded,
+} from './khmerConsonantMetrics.js';
 
 function clampRectToBbox(rect, bbox) {
   const x1 = Math.max(bbox.x1, rect.x);
   const y1 = Math.max(bbox.y1, rect.y);
   const x2 = Math.min(bbox.x2, rect.x + rect.width);
   const y2 = Math.min(bbox.y2, rect.y + rect.height);
-
   return {
-    x: x1,
-    y: y1,
+    x: x1, y: y1,
     width: Math.max(0, x2 - x1),
     height: Math.max(0, y2 - y1),
   };
 }
 
-/**
- * Создаёт clipRect для конкретной позиции
- * position: 'left' | 'right' | 'top' | 'bottom' | 'center'
- */
-function createClipRectForPosition(bbox, position) {
-  const w = bbox.x2 - bbox.x1;
-  const h = bbox.y2 - bbox.y1;
-
-  const centerX = (bbox.x1 + bbox.x2) / 2;
-  const centerY = (bbox.y1 + bbox.y2) / 2;
-
-  // Перекрытие зон, чтобы не было щелей
-  const overlapX = w * 0.06;
-  const overlapY = h * 0.06;
-
-  // Доли зон
-  const leftW = w * 0.45;
-  const rightW = w * 0.45;
-  const topH = h * 0.45;
-  const bottomH = h * 0.45;
-
-  let rect;
-
-  switch (position) {
-    case "left":
-      rect = {
-        x: bbox.x1,
-        y: bbox.y1,
-        width: leftW + overlapX,
-        height: h,
-      };
-      break;
-
-    case "right":
-      rect = {
-        x: bbox.x2 - rightW - overlapX,
-        y: bbox.y1,
-        width: rightW + overlapX,
-        height: h,
-      };
-      break;
-
-    case "top":
-      rect = {
-        x: bbox.x1,
-        y: centerY - overlapY,
-        width: w,
-        height: bbox.y2 - (centerY - overlapY),
-      };
-      break;
-
-    case "bottom":
-      rect = {
-        x: bbox.x1,
-        y: bbox.y1,
-        width: w,
-        height: (centerY - bbox.y1) + overlapY,
-      };
-      break;
-
-    case "center":
-      rect = {
-        x: bbox.x1 + w * 0.20,
-        y: bbox.y1 + h * 0.18,
-        width: w * 0.60,
-        height: h * 0.64,
-      };
-      break;
-
-    default:
-      rect = {
-        x: bbox.x1,
-        y: bbox.y1,
-        width: w,
-        height: h,
-      };
-      break;
-  }
-
-  return clampRectToBbox(rect, bbox);
+function findBaseCP(units) {
+  const base = units.find(
+    (u) => u.category === 'base_consonant' || u.category === 'independent_vowel'
+  );
+  return base?.codePoints?.[0] ?? null;
 }
 
 /**
- * Объединяет несколько clipRect в один
+ * Нарезать bbox кластера на топологические зоны.
+ *
+ * Если метрики загружены — используем реальные bbox из /api/metrics.
+ * Иначе — heuristic fallback через пропорции от тела базовой согласной.
+ *
+ * bbox здесь в формате { x1, y1, x2, y2 }.
+ *
+ * @param {{ x1, y1, x2, y2 }} bbox
+ * @param {Array} units — edu-units (с полями category, codePoints, text)
+ * @param {number|null} [baseCodePoint]
  */
-function mergeClipRects(rects) {
-  const valid = (rects || []).filter((r) => r && r.width > 0 && r.height > 0);
-  if (valid.length === 0) return null;
-  if (valid.length === 1) return valid[0];
+export function getTopologyZones(bbox, units, baseCodePoint = null) {
+  // ── Если метрики загружены — делегируем им ───────────────────────────────
+  if (isMetricsLoaded()) {
+    const zones = computeZonesFromMetrics(bbox, units);
+    // computeZonesFromMetrics возвращает { x, y, width, height }
+    // конвертируем обратно в { x, y, width, height } — формат уже правильный
+    return zones;
+  }
 
-  const x1 = Math.min(...valid.map((r) => r.x));
-  const y1 = Math.min(...valid.map((r) => r.y));
-  const x2 = Math.max(...valid.map((r) => r.x + r.width));
-  const y2 = Math.max(...valid.map((r) => r.y + r.height));
+  // ── Heuristic fallback (метрики ещё не загружены) ────────────────────────
+  const zones = { RIGHT: null, BOTTOM: null, TOP: null, LEFT: null, BASE: null };
 
-  return {
-    x: x1,
-    y: y1,
-    width: x2 - x1,
-    height: y2 - y1,
+  const fullX1 = bbox.x1 ?? 0;
+  const fullY1 = bbox.y1 ?? 0;
+  const fullX2 = bbox.x2 ?? 0;
+  const fullY2 = bbox.y2 ?? 0;
+
+  const cps = new Set(units.flatMap((u) => u.codePoints || []));
+  const cats = new Set(units.map((u) => u.category));
+
+  const hasBottom = cats.has('subscript_consonant') || cats.has('coeng') || cps.has(0x17BB) || cps.has(0x17BC);
+  const hasRight = cps.has(0x17B6) || cps.has(0x17C7);
+  const leftCodes = [0x17C1, 0x17C2, 0x17C3, 0x17BE, 0x17BF, 0x17C0, 0x17C4, 0x17C5];
+  const hasLeft = leftCodes.some((code) => cps.has(code));
+  const hasTop = cats.has('diacritic') || cats.has('diacritic_sign') ||
+    (cats.has('dependent_vowel') && !hasRight && !hasLeft && !cps.has(0x17BB) && !cps.has(0x17BC));
+
+  const cp = baseCodePoint ?? findBaseCP(units);
+  const body = getConsonantBodyRect(bbox, cp);
+  const bX1 = body.bodyX1;
+  const bY1 = body.bodyY1;
+  const bX2 = body.bodyX2;
+  const bY2 = body.bodyY2;
+
+  if (hasRight) {
+    const rightW = Math.max(0, fullX2 - bX2);
+    if (rightW > 0) {
+      zones.RIGHT = { x: bX2, y: fullY1, width: rightW, height: fullY2 - fullY1 };
+    } else {
+      const fallbackW = Math.max(1, (bX2 - bX1) * 0.30);
+      zones.RIGHT = { x: bX2 - fallbackW, y: fullY1, width: fallbackW, height: fullY2 - fullY1 };
+    }
+  }
+
+  if (hasLeft) {
+    const leftW = Math.max(0, bX1 - fullX1);
+    if (leftW > 0) {
+      zones.LEFT = { x: fullX1, y: bY1, width: leftW, height: bY2 - bY1 };
+    } else {
+      const fallbackW = Math.max(1, (bX2 - bX1) * 0.28);
+      zones.LEFT = { x: fullX1, y: bY1, width: fallbackW, height: bY2 - bY1 };
+    }
+  }
+
+  if (hasBottom) {
+    const bottomH = Math.max(0, fullY2 - bY2);
+    if (bottomH > 0) {
+      zones.BOTTOM = { x: fullX1, y: bY2, width: fullX2 - fullX1, height: bottomH };
+    } else {
+      const fallbackH = Math.max(1, (bY2 - bY1) * 0.40);
+      zones.BOTTOM = { x: fullX1, y: bY2 - fallbackH, width: fullX2 - fullX1, height: fallbackH };
+    }
+  }
+
+  if (hasTop) {
+    const topH = Math.max(0, bY1 - fullY1);
+    if (topH > 0) {
+      zones.TOP = { x: fullX1, y: fullY1, width: fullX2 - fullX1, height: topH };
+    } else {
+      const fallbackH = Math.max(1, (bY2 - bY1) * 0.25);
+      zones.TOP = { x: fullX1, y: fullY1, width: fullX2 - fullX1, height: fallbackH };
+    }
+  }
+
+  zones.BASE = {
+    x: bX1, y: bY1,
+    width: Math.max(0, bX2 - bX1),
+    height: Math.max(0, bY2 - bY1),
   };
+
+  return zones;
 }
 
-function unique(arr) {
-  return Array.from(new Set(arr));
-}
-
-function getPositionsForUnit(unit) {
-  const cps = Array.isArray(unit?.codePoints) ? unit.codePoints : [];
-  const pos = cps.flatMap((cp) => getSymbolPositions(cp) || []);
-  return unique(pos);
-}
-
-function isUnitInsideGlyphCluster(unit, glyph) {
-  const hasUnitRange = Number.isInteger(unit?.sourceStart) && Number.isInteger(unit?.sourceEnd);
-  const hasGlyphRange = Number.isInteger(glyph?.clusterStart) && Number.isInteger(glyph?.clusterEnd);
-
-  if (!hasUnitRange || !hasGlyphRange) return true;
-
-  // overlap check: [start, end)
-  return unit.sourceStart < glyph.clusterEnd && unit.sourceEnd > glyph.clusterStart;
-}
-
-function getCategoryPriority(category) {
-  // больше = выше приоритет в наложении
-  switch (category) {
-    case "base_consonant":
-      return 100;
-    case "independent_vowel":
-      return 95;
-    case "subscript_consonant":
-      return 90;
-    case "coeng":
-      return 85;
-    case "dependent_vowel":
-      return 80;
-    case "diacritic_sign":
-    case "diacritic":
-      return 70;
-    default:
-      return 10;
-  }
-}
-
-/**
- * Создаёт parts используя известные позиции символов
- */
 export function createClipPathParts(glyph, units) {
   if (!glyph?.d || !glyph?.bb) return [];
 
   const glyphCps = new Set(glyph.codePoints || []);
   const relevantUnits = (units || []).filter((u) => {
-    const codePointHit = (u.codePoints || []).some((cp) => glyphCps.has(cp));
-    const inCluster = isUnitInsideGlyphCluster(u, glyph);
-    const combiningLike =
-      u?.category === 'coeng' ||
-      u?.category === 'dependent_vowel' ||
-      u?.category === 'diacritic_sign' ||
-      u?.category === 'diacritic';
-
-    return inCluster && (codePointHit || combiningLike);
+    const hit = (u.codePoints || []).some((cp) => glyphCps.has(cp));
+    const hasRange = Number.isInteger(u.sourceStart) && Number.isInteger(glyph.clusterStart);
+    if (hasRange) return u.sourceStart < glyph.clusterEnd && u.sourceEnd > glyph.clusterStart;
+    return hit;
   });
-
 
   if (relevantUnits.length === 0) return [];
 
-  const bbox = glyph.bb;
+  const baseCP = relevantUnits.find(
+    (u) => u.category === 'base_consonant' || u.category === 'independent_vowel'
+  )?.codePoints?.[0] ?? null;
+
+  const zones = getTopologyZones(glyph.bb, relevantUnits, baseCP);
   const parts = [];
+  const leftCodes = [0x17C1, 0x17C2, 0x17C3, 0x17BE, 0x17BF, 0x17C0, 0x17C4, 0x17C5];
 
   for (const unit of relevantUnits) {
-    const category = unit.category || "other";
-    const color = CATEGORY_COLORS[category] || "#111";
+    const cat = unit.category;
+    const cp = unit.codePoints[0];
+    let targetZone = null;
+    let zoneName = 'unknown';
 
-    let clipRect = null;
-    let zoneName = "unknown";
-
-    if (category === "base_consonant" || category === "independent_vowel") {
-      // Центральная зона для базы, чтобы не "съедать" крайние маркеры
-      clipRect = createClipRectForPosition(bbox, "center");
-      zoneName = "center";
-    } else if (category === "subscript_consonant") {
-      // Подписная — внизу, но чуть уже по ширине
-      const bottom = createClipRectForPosition(bbox, "bottom");
-      const wPad = (bbox.x2 - bbox.x1) * 0.10;
-      clipRect = clampRectToBbox(
-        {
-          x: bottom.x + wPad,
-          y: bottom.y,
-          width: Math.max(0, bottom.width - 2 * wPad),
-          height: bottom.height,
-        },
-        bbox
-      );
-      zoneName = "bottom";
-    } else if (category === "dependent_vowel") {
-      const positions = getPositionsForUnit(unit);
-
-      if (positions.length > 0) {
-        const rects = positions.map((p) => createClipRectForPosition(bbox, p));
-        clipRect = mergeClipRects(rects);
-        zoneName = positions.join("+");
-      } else {
-        // fallback: чаще справа/сверху, но лучше right как нейтральный
-        clipRect = createClipRectForPosition(bbox, "right");
-        zoneName = "right (fallback)";
-      }
-    } else if (category === "diacritic_sign" || category === "diacritic") {
-      const positions = getPositionsForUnit(unit);
-
-      if (positions.length > 0) {
-        const rects = positions.map((p) => createClipRectForPosition(bbox, p));
-        clipRect = mergeClipRects(rects);
-        zoneName = positions.join("+");
-      } else {
-        clipRect = createClipRectForPosition(bbox, "top");
-        zoneName = "top (fallback)";
-      }
-    } else if (category === "coeng") {
-      clipRect = createClipRectForPosition(bbox, "bottom");
-      zoneName = "bottom";
+    if (cp === 0x17B6 || cp === 0x17C7) {
+      targetZone = zones.RIGHT; zoneName = 'RIGHT';
+    } else if (leftCodes.includes(cp)) {
+      targetZone = zones.LEFT; zoneName = 'LEFT';
+    } else if (cat === 'subscript_consonant' || cat === 'coeng' || cp === 0x17BB || cp === 0x17BC) {
+      targetZone = zones.BOTTOM; zoneName = 'BOTTOM';
+    } else if (cat === 'diacritic_sign' || cat === 'diacritic') {
+      targetZone = zones.TOP; zoneName = 'TOP';
+    } else if (cat === 'base_consonant' || cat === 'independent_vowel') {
+      targetZone = zones.BASE; zoneName = 'BASE';
     } else {
-      // other — не режем
-      clipRect = createClipRectForPosition(bbox, "center");
-      zoneName = "center (fallback)";
+      targetZone = zones.TOP; zoneName = 'TOP (fallback)';
     }
 
-    if (clipRect && clipRect.width > 0 && clipRect.height > 0) {
+    if (targetZone && targetZone.width > 0) {
+      // Зоны из computeZonesFromMetrics уже в формате {x,y,w,h} без x1/y1
+      // clampRectToBbox ожидает rect с x/y/width/height и bbox с x1/y1/x2/y2
+      const clipped = clampRectToBbox(targetZone, glyph.bb);
       parts.push({
         unitId: unit.id,
-        category,
-        char: unit.text || "",
+        category: cat,
+        char: unit.text,
         pathData: glyph.d,
-        color,
-        clipRect,
+        color: getColorForCategory(cat, unit.text),
+        clipRect: clipped,
         zone: zoneName,
-        priority: getCategoryPriority(category),
+        priority: cat === 'base_consonant' ? 1 : 10,
       });
     }
   }
 
-  return parts;
+  return parts.sort((a, b) => a.priority - b.priority);
 }
