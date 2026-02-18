@@ -259,6 +259,39 @@ function normalizeAndFilterParts(parts) {
     .filter((p) => !isIgnorablePart(p));
 }
 
+function computeRightTailSplit(totalWidth, preferredTailWidth) {
+  const width = Math.max(0, Number(totalWidth) || 0);
+  if (width <= 0) {
+    return { baseClipWidth: 0, tailWidth: 0 };
+  }
+
+  // Всегда сохраняем заметную ширину базы и правого хвоста,
+  // чтобы не получать "пропадающие" части при узких bbox.
+  const minSlice = Math.max(24, width * 0.15);
+  const maxTail = Math.max(minSlice, width - minSlice);
+  const tail = Math.min(maxTail, Math.max(minSlice, preferredTailWidth || 0));
+  const base = Math.max(minSlice, width - tail);
+
+  return {
+    baseClipWidth: Math.min(base, width),
+    tailWidth: Math.min(tail, width),
+  };
+}
+
+
+function getPreferredRightTailWidth(vowelCp, baseWidth) {
+  const metricsTail = getVowelMetrics(vowelCp)?.delta?.right;
+  if (metricsTail != null && metricsTail > 10) {
+    return Math.max(48, metricsTail);
+  }
+
+  // Эти три зависимые гласные имеют правую "хвостовую" часть.
+  // Ширина не константна между шрифтами, поэтому используем устойчивый диапазон.
+  if (vowelCp === 0x17B6) return Math.max(90, baseWidth * 0.28); // ា
+  if (vowelCp === 0x17C4 || vowelCp === 0x17C5) return Math.max(110, baseWidth * 0.32); // ោ / ៅ
+  return Math.max(80, baseWidth * 0.26);
+}
+
 /**
  * Narrow stacked layout для слитного кхмерского кластера:
  * base + coeng + subscript + lower dependent vowel + top diacritic.
@@ -640,8 +673,8 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         const bb = baseComp.bb;
         const bbWidth = Math.max(0, (bb.x2 || 0) - (bb.x1 || 0));
         const bbHeight = Math.max(0, (bb.y2 || 0) - (bb.y1 || 0));
-        const vowelWidth = Math.max(120, bbWidth * 0.3);
-        const baseClipWidth = Math.max(0, bbWidth - vowelWidth);
+        const rawVowelWidth = Math.max(120, bbWidth * 0.3);
+        const { baseClipWidth, tailWidth: vowelWidth } = computeRightTailSplit(bbWidth, rawVowelWidth);
 
         if (parts[0]) {
           parts[0].clipRect = {
@@ -730,10 +763,10 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
 
       const vowelMetricsForSplit = getVowelMetrics(vowelCode);
       const metricsTailWidth = vowelMetricsForSplit?.delta?.right;
-      const tailWidth = (metricsTailWidth != null && metricsTailWidth > 10)
+      const rawTailWidth = (metricsTailWidth != null && metricsTailWidth > 10)
         ? Math.max(50, metricsTailWidth)
         : Math.max(120, bbWidth * 0.35);
-      const baseClipWidth = Math.max(0, bbWidth - tailWidth);
+      const { baseClipWidth, tailWidth } = computeRightTailSplit(bbWidth, rawTailWidth);
 
       const baseIsAlone = glyph.components.filter(c => c !== baseComponent).length === 0;
       const baseClipRect = (isAALigature || baseIsAlone)
@@ -843,6 +876,137 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
 
       console.log('[MAPPER] Created split parts:', parts.length);
       return normalizeAndFilterParts(parts);
+    }
+  }
+
+  const baseMetaForCoeng = charMeta.find(
+    (m) => m.category === 'base_consonant' || m.category === 'independent_vowel'
+  );
+  const dependentMetaForCoeng = charMeta.find((m) => m.category === 'dependent_vowel');
+  const coengMeta = charMeta.find((m) => m.category === 'coeng');
+  const subscriptMetaForCoeng = charMeta.find((m) => m.category === 'subscript_consonant');
+
+  const dependentCpForCoeng = cpOf(dependentMetaForCoeng?.char);
+  const isRightSplitVowelCase =
+    baseMetaForCoeng &&
+    dependentMetaForCoeng &&
+    coengMeta &&
+    subscriptMetaForCoeng &&
+    dependentCpForCoeng != null &&
+    [0x17B6, 0x17C4, 0x17C5].includes(dependentCpForCoeng);
+
+  if (isRightSplitVowelCase) {
+    const baseCP = baseMetaForCoeng.char?.codePointAt(0) ?? null;
+    const baseComponentByMeta = pickBaseComponent(glyph.components, baseCP, charMeta);
+    const baseComponentByArea = pickLargestComponent(glyph.components || []);
+    const baseComponent = baseComponentByArea?.bb ? baseComponentByArea : baseComponentByMeta;
+
+    if (baseComponent?.bb) {
+      const bb = baseComponent.bb;
+      const bbWidth = Math.max(0, (bb.x2 || 0) - (bb.x1 || 0));
+      const bbHeight = Math.max(0, (bb.y2 || 0) - (bb.y1 || 0));
+      const preferredTail = getPreferredRightTailWidth(dependentCpForCoeng, bbWidth);
+      const { baseClipWidth, tailWidth } = computeRightTailSplit(bbWidth, preferredTail);
+
+      const structuredParts = [];
+      structuredParts.push({
+        partId: `${glyph.id}-coeng-base`,
+        component: baseComponent,
+        char: baseMetaForCoeng.char,
+        category: baseMetaForCoeng.category,
+        color: getColorForCategory(baseMetaForCoeng.category, baseMetaForCoeng.char),
+        zone: 'split_base',
+        hbGlyphId: baseComponent?.hbGlyphId,
+        clipRect: {
+          x: bb.x1,
+          y: bb.y1,
+          width: baseClipWidth,
+          height: bbHeight,
+        },
+      });
+
+      const nonBase = (glyph.components || []).filter((c) => c !== baseComponent);
+      const sortedNonBase = [...nonBase].sort((a, b) => getComponentCenterX(a) - getComponentCenterX(b));
+      const coengComponent = sortedNonBase[0] || baseComponent;
+      const subscriptComponent = sortedNonBase[1] || coengComponent;
+
+      structuredParts.push({
+        partId: `${glyph.id}-coeng-mark`,
+        component: coengComponent,
+        char: coengMeta.char,
+        category: coengMeta.category,
+        color: getColorForCategory(coengMeta.category, coengMeta.char),
+        zone: 'split_coeng',
+        hbGlyphId: coengComponent?.hbGlyphId,
+        clipRect: componentToClipRect(coengComponent),
+      });
+
+      structuredParts.push({
+        partId: `${glyph.id}-subscript-mark`,
+        component: subscriptComponent,
+        char: subscriptMetaForCoeng.char,
+        category: subscriptMetaForCoeng.category,
+        color: getColorForCategory(subscriptMetaForCoeng.category, subscriptMetaForCoeng.char),
+        zone: 'split_subscript',
+        hbGlyphId: subscriptComponent?.hbGlyphId,
+        clipRect: componentToClipRect(subscriptComponent),
+      });
+
+      const depZones = getVowelZones(dependentCpForCoeng);
+      if (depZones.includes('LEFT')) {
+        const leftComp = sortedNonBase.find((c) => getComponentCenterX(c) < getComponentCenterX(baseComponent));
+        const leftSource = leftComp || baseComponent;
+        const leftRect = componentToClipRect(leftSource);
+        if (leftRect) {
+          structuredParts.push({
+            partId: `${glyph.id}-vowel-leading`,
+            component: leftSource,
+            char: dependentMetaForCoeng.char,
+            category: dependentMetaForCoeng.category,
+            color: getColorForCategory(dependentMetaForCoeng.category, dependentMetaForCoeng.char),
+            zone: 'split_vowel_leading',
+            hbGlyphId: leftSource?.hbGlyphId,
+            clipRect: leftComp
+              ? leftRect
+              : { x: leftRect.x, y: leftRect.y, width: Math.max(24, leftRect.width * 0.28), height: leftRect.height },
+          });
+        }
+      }
+
+      structuredParts.push({
+        partId: `${glyph.id}-vowel-trailing-main`,
+        component: baseComponent,
+        char: dependentMetaForCoeng.char,
+        category: dependentMetaForCoeng.category,
+        color: getColorForCategory(dependentMetaForCoeng.category, dependentMetaForCoeng.char),
+        zone: 'split_vowel_trailing',
+        hbGlyphId: baseComponent?.hbGlyphId,
+        clipRect: {
+          x: bb.x1 + baseClipWidth,
+          y: bb.y1,
+          width: tailWidth,
+          height: bbHeight,
+        },
+      });
+
+      const otherMeta = charMeta.filter(
+        (m) => m.category === 'diacritic_sign' || m.category === 'diacritic'
+      );
+      otherMeta.forEach((meta) => {
+        const comp = pickComponentForCategory(glyph, meta.category, meta.unitIdx, charMeta);
+        structuredParts.push({
+          partId: `${glyph.id}-coeng-mark-${meta.unitIdx}`,
+          component: comp,
+          char: meta.char,
+          category: meta.category,
+          color: getColorForCategory(meta.category, meta.char),
+          zone: 'mark',
+          hbGlyphId: comp?.hbGlyphId,
+          clipRect: componentToClipRect(comp),
+        });
+      });
+
+      return normalizeAndFilterParts(structuredParts);
     }
   }
 
