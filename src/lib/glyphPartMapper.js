@@ -51,6 +51,36 @@ function getComponentCenterY(component) {
   return ((component.bb.y1 || 0) + (component.bb.y2 || 0)) / 2;
 }
 
+function getComponentRightEdge(comp) {
+  const penX = Number.isFinite(comp?.x) ? comp.x : 0;
+  if (comp?.bb && Number.isFinite(comp.bb.x2)) return penX + comp.bb.x2;
+  return penX;
+}
+
+function pickBaseForCoengRightSplit(components, consonantCP) {
+  const list = (components || []).filter((c) => c?.bb);
+  if (!list.length) return null;
+  if (list.length === 1) return list[0];
+
+  if (consonantCP != null) {
+    const metrics = getRawMetrics();
+    const knownGlyphId = metrics?.consonants?.[consonantCP]?.glyphId;
+    if (knownGlyphId != null) {
+      const byGlyph = list.find((c) => c.hbGlyphId === knownGlyphId);
+      if (byGlyph) return byGlyph;
+    }
+  }
+
+  // Для цепочек base + coeng + subscript + (ា/ោ/ៅ)
+  // база обычно расположена выше подписных форм.
+  // Поэтому используем минимальный centerY как устойчивый fallback.
+  return [...list].sort((a, b) => {
+    const dy = getComponentCenterY(a) - getComponentCenterY(b);
+    if (dy !== 0) return dy;
+    return getComponentArea(b) - getComponentArea(a);
+  })[0] || list[0];
+}
+
 function hasCategory(meta, cat) {
   return meta.some((m) => m.category === cat);
 }
@@ -897,18 +927,16 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
 
   if (isRightSplitVowelCase) {
     const baseCP = baseMetaForCoeng.char?.codePointAt(0) ?? null;
-    const baseComponentByMeta = pickBaseComponent(glyph.components, baseCP, charMeta);
-    const baseComponentByArea = pickLargestComponent(glyph.components || []);
-    const baseComponent = baseComponentByArea?.bb ? baseComponentByArea : baseComponentByMeta;
+    const baseComponent = pickBaseForCoengRightSplit(glyph.components, baseCP);
 
     if (baseComponent?.bb) {
       const bb = baseComponent.bb;
       const bbWidth = Math.max(0, (bb.x2 || 0) - (bb.x1 || 0));
       const bbHeight = Math.max(0, (bb.y2 || 0) - (bb.y1 || 0));
-      const preferredTail = getPreferredRightTailWidth(dependentCpForCoeng, bbWidth);
-      const { baseClipWidth, tailWidth } = computeRightTailSplit(bbWidth, preferredTail);
-
       const structuredParts = [];
+      let baseClipWidth = bbWidth;
+      let trailingClipRect = null;
+
       structuredParts.push({
         partId: `${glyph.id}-coeng-base`,
         component: baseComponent,
@@ -920,15 +948,62 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         clipRect: {
           x: bb.x1,
           y: bb.y1,
-          width: baseClipWidth,
+          width: bbWidth,
           height: bbHeight,
         },
       });
 
       const nonBase = (glyph.components || []).filter((c) => c !== baseComponent);
       const sortedNonBase = [...nonBase].sort((a, b) => getComponentCenterX(a) - getComponentCenterX(b));
-      const coengComponent = sortedNonBase[0] || baseComponent;
-      const subscriptComponent = sortedNonBase[1] || coengComponent;
+      const sortedByLower = [...nonBase].sort((a, b) => getComponentCenterY(b) - getComponentCenterY(a));
+      const subscriptComponent = sortedByLower[0] || sortedNonBase[1] || sortedNonBase[0] || baseComponent;
+      const coengComponent =
+        sortedNonBase.find((c) => c !== subscriptComponent) ||
+        sortedNonBase[0] ||
+        subscriptComponent;
+
+      const baseRightEdge = getComponentRightEdge(baseComponent);
+      const vowelTrailingComponent =
+        [...nonBase]
+          .filter((c) => c?.bb)
+          .sort((a, b) => {
+            const dr = getComponentRightEdge(b) - getComponentRightEdge(a);
+            if (dr !== 0) return dr;
+            return getComponentCenterY(b) - getComponentCenterY(a);
+          })[0] || baseComponent;
+
+      const trailingOnNonBase =
+        vowelTrailingComponent !== baseComponent &&
+        getComponentRightEdge(vowelTrailingComponent) >= baseRightEdge - 8;
+
+      if (!trailingOnNonBase) {
+        const preferredTail = getPreferredRightTailWidth(dependentCpForCoeng, bbWidth);
+        const split = computeRightTailSplit(bbWidth, preferredTail);
+        baseClipWidth = split.baseClipWidth;
+        trailingClipRect = {
+          x: bb.x1 + split.baseClipWidth,
+          y: bb.y1,
+          width: split.tailWidth,
+          height: bbHeight,
+        };
+      } else {
+        const trailingRectSource = componentToClipRect(vowelTrailingComponent);
+        if (trailingRectSource) {
+          const preferredTail = getPreferredRightTailWidth(
+            dependentCpForCoeng,
+            Math.max(1, trailingRectSource.width)
+          );
+          const split = computeRightTailSplit(trailingRectSource.width, preferredTail);
+          trailingClipRect = {
+            x: trailingRectSource.x + split.baseClipWidth,
+            y: trailingRectSource.y,
+            width: split.tailWidth,
+            height: trailingRectSource.height,
+          };
+        }
+      }
+
+      structuredParts[0].clipRect.width = baseClipWidth;
 
       structuredParts.push({
         partId: `${glyph.id}-coeng-mark`,
@@ -975,18 +1050,13 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
 
       structuredParts.push({
         partId: `${glyph.id}-vowel-trailing-main`,
-        component: baseComponent,
+        component: trailingOnNonBase ? vowelTrailingComponent : baseComponent,
         char: dependentMetaForCoeng.char,
         category: dependentMetaForCoeng.category,
         color: getColorForCategory(dependentMetaForCoeng.category, dependentMetaForCoeng.char),
         zone: 'split_vowel_trailing',
-        hbGlyphId: baseComponent?.hbGlyphId,
-        clipRect: {
-          x: bb.x1 + baseClipWidth,
-          y: bb.y1,
-          width: tailWidth,
-          height: bbHeight,
-        },
+        hbGlyphId: (trailingOnNonBase ? vowelTrailingComponent : baseComponent)?.hbGlyphId,
+        clipRect: trailingClipRect,
       });
 
       const otherMeta = charMeta.filter(

@@ -119,6 +119,70 @@ test('does not crop subscript component when separate lower component exists (�
   }
 });
 
+test('uses base-consonant component for split_base instead of largest non-base component (ក្រា regression)', () => {
+  const text = 'ក្រា';
+  const units = buildEduUnits(text);
+
+  // Simulate a cluster where a non-base component has larger area than base.
+  // split_base must still be anchored to the true base component.
+  const baseComp = mkComp(435, 0, { x1: 120, y1: -1400, x2: 920, y2: -100 });
+  const oversizedNonBaseComp = mkComp(901, 0, { x1: 60, y1: -1500, x2: 1900, y2: 650 });
+
+  const glyph = {
+    id: 0,
+    chars: ['ក', '្', 'រ', 'ា'],
+    codePoints: [0x1780, 0x17D2, 0x179A, 0x17B6],
+    clusterStart: 0,
+    clusterEnd: text.length,
+    x: 0,
+    y: 0,
+    advance: 2200,
+    d: mkRectPath(0, -1600, 2200, 700),
+    bb: { x1: 0, y1: -1600, x2: 2200, y2: 700 },
+    components: [baseComp, oversizedNonBaseComp],
+  };
+
+  const mapped = mapGlyphsToParts([glyph], units, { enableSegmentation: true })[0].parts;
+  const basePart = mapped.find((p) => p.zone === 'split_base' && p.category === 'base_consonant');
+
+  assert.ok(basePart, 'missing split_base base_consonant part');
+  assert.equal(basePart.hbGlyphId, baseComp.hbGlyphId, 'split_base should be mapped to the true base component');
+});
+
+test('maps trailing vowel part to non-base component when right tail is fused there (no duplicate on base)', () => {
+  const text = 'ក្រា';
+  const units = buildEduUnits(text);
+
+  const baseComp = mkComp(435, 0, { x1: 140, y1: -1400, x2: 980, y2: -120 });
+  // Simulate fused subscript+vowel-right tail: much lower and extends farther right than base.
+  const fusedLowerComp = mkComp(777, 0, { x1: -120, y1: -380, x2: 1880, y2: 680 });
+
+  const glyph = {
+    id: 0,
+    chars: ['ក', '្', 'រ', 'ា'],
+    codePoints: [0x1780, 0x17D2, 0x179A, 0x17B6],
+    clusterStart: 0,
+    clusterEnd: text.length,
+    x: 0,
+    y: 0,
+    advance: 2300,
+    d: mkRectPath(0, -1600, 2300, 700),
+    bb: { x1: 0, y1: -1600, x2: 2300, y2: 700 },
+    components: [baseComp, fusedLowerComp],
+  };
+
+  const mapped = mapGlyphsToParts([glyph], units, { enableSegmentation: true })[0].parts;
+  const basePart = mapped.find((p) => p.zone === 'split_base' && p.category === 'base_consonant');
+  const vowelTail = mapped.find((p) => p.zone === 'split_vowel_trailing' && p.category === 'dependent_vowel');
+
+  assert.ok(basePart, 'missing split_base part');
+  assert.ok(vowelTail, 'missing split_vowel_trailing part');
+
+  assert.equal(basePart.hbGlyphId, baseComp.hbGlyphId, 'base should stay on base component');
+  assert.equal(vowelTail.hbGlyphId, fusedLowerComp.hbGlyphId, 'trailing vowel should be attached to fused non-base component');
+  assert.equal(basePart.clipRect.width, baseComp.bb.x2 - baseComp.bb.x1, 'base clip should remain full when tail is on non-base');
+});
+
 function componentToRect(comp) {
   return {
     x: comp.bb.x1,
