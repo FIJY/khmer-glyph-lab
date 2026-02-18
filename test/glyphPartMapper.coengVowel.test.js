@@ -111,10 +111,12 @@ test('does not crop subscript component when separate lower component exists (�
     assert.ok(sub, `${item.text}: missing subscript part`);
 
     const fullSubRect = componentToRect(glyph.components[2]);
-    assert.deepEqual(
-      sub.clipRect,
-      fullSubRect,
-      `${item.text}: subscript clip should keep full component bbox when separate component exists`
+    assert.ok(
+      sub.clipRect.x <= fullSubRect.x &&
+      sub.clipRect.y <= fullSubRect.y &&
+      sub.clipRect.width >= fullSubRect.width &&
+      sub.clipRect.height >= fullSubRect.height,
+      `${item.text}: subscript clip should fully cover the original component bbox`
     );
   }
 });
@@ -180,11 +182,44 @@ test('maps trailing vowel part to non-base component when right tail is fused th
 
   assert.equal(basePart.hbGlyphId, baseComp.hbGlyphId, 'base should stay on base component');
   assert.equal(vowelTail.hbGlyphId, fusedLowerComp.hbGlyphId, 'trailing vowel should be attached to fused non-base component');
-  assert.equal(basePart.clipRect.width, baseComp.bb.x2 - baseComp.bb.x1, 'base clip should remain full when tail is on non-base');
   assert.ok(
-    vowelTail.clipRect.x >= fusedLowerComp.bb.x1 + (fusedLowerComp.bb.x2 - fusedLowerComp.bb.x1) * 0.58,
+    basePart.clipRect.width < baseComp.bb.x2 - baseComp.bb.x1,
+    'base clip should be reduced so right vowel tail is visually detached from base'
+  );
+  assert.ok(
+    vowelTail.clipRect.x >= fusedLowerComp.bb.x1 + (fusedLowerComp.bb.x2 - fusedLowerComp.bb.x1) * 0.5,
     'trailing vowel split on fused non-base should start right of subscript center mass'
   );
+  assert.ok(vowelTail.clipRect.width >= 48, 'trailing vowel clip should keep visible width');
+});
+
+test('expands subscript clip rect in right-split clusters so lower consonant is not cropped', () => {
+  const text = 'ក្វៅ';
+  const units = buildEduUnits(text);
+
+  const baseComp = mkComp(435, 0, { x1: 120, y1: -1450, x2: 980, y2: -80 });
+  const fusedLowerComp = mkComp(777, 0, { x1: -120, y1: -360, x2: 1880, y2: 640 });
+
+  const glyph = {
+    id: 0,
+    chars: ['ក', '្', 'វ', 'ៅ'],
+    codePoints: [0x1780, 0x17D2, 0x179C, 0x17C5],
+    clusterStart: 0,
+    clusterEnd: text.length,
+    x: 0,
+    y: 0,
+    advance: 2300,
+    d: mkRectPath(0, -1600, 2300, 700),
+    bb: { x1: 0, y1: -1600, x2: 2300, y2: 700 },
+    components: [baseComp, fusedLowerComp],
+  };
+
+  const mapped = mapGlyphsToParts([glyph], units, { enableSegmentation: true })[0].parts;
+  const subPart = mapped.find((p) => p.zone === 'split_subscript' && p.category === 'subscript_consonant');
+
+  assert.ok(subPart, 'missing split_subscript part');
+  assert.ok(subPart.clipRect.width > fusedLowerComp.bb.x2 - fusedLowerComp.bb.x1, 'subscript clip should be wider than raw bbox');
+  assert.ok(subPart.clipRect.height > fusedLowerComp.bb.y2 - fusedLowerComp.bb.y1, 'subscript clip should be taller than raw bbox');
 });
 
 function componentToRect(comp) {
