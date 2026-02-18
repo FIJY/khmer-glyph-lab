@@ -181,6 +181,10 @@ test('maps trailing vowel part to non-base component when right tail is fused th
   assert.equal(basePart.hbGlyphId, baseComp.hbGlyphId, 'base should stay on base component');
   assert.equal(vowelTail.hbGlyphId, fusedLowerComp.hbGlyphId, 'trailing vowel should be attached to fused non-base component');
   assert.equal(basePart.clipRect.width, baseComp.bb.x2 - baseComp.bb.x1, 'base clip should remain full when tail is on non-base');
+  assert.ok(
+    vowelTail.clipRect.x >= fusedLowerComp.bb.x1 + (fusedLowerComp.bb.x2 - fusedLowerComp.bb.x1) * 0.58,
+    'trailing vowel split on fused non-base should start right of subscript center mass'
+  );
 });
 
 function componentToRect(comp) {

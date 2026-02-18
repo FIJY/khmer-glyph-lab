@@ -308,6 +308,24 @@ function computeRightTailSplit(totalWidth, preferredTailWidth) {
   };
 }
 
+function computeRightBiasedTailSplit(totalWidth, preferredTailWidth) {
+  const width = Math.max(0, Number(totalWidth) || 0);
+  if (width <= 0) {
+    return { baseClipWidth: 0, tailWidth: 0 };
+  }
+
+  // Для случая, когда правый хвост слит с подписной формой,
+  // сдвигаем границу правее центра, чтобы хвост не "съедал" субскрипт.
+  const generic = computeRightTailSplit(width, preferredTailWidth);
+  const minBase = Math.max(generic.baseClipWidth, width * 0.62);
+  const baseClipWidth = Math.min(width - 24, Math.max(24, minBase));
+
+  return {
+    baseClipWidth,
+    tailWidth: Math.max(24, width - baseClipWidth),
+  };
+}
+
 
 function getPreferredRightTailWidth(vowelCp, baseWidth) {
   const metricsTail = getVowelMetrics(vowelCp)?.delta?.right;
@@ -961,6 +979,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         sortedNonBase.find((c) => c !== subscriptComponent) ||
         sortedNonBase[0] ||
         subscriptComponent;
+      const subscriptRect = componentToClipRect(subscriptComponent);
 
       const baseRightEdge = getComponentRightEdge(baseComponent);
       const vowelTrailingComponent =
@@ -993,13 +1012,23 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
             dependentCpForCoeng,
             Math.max(1, trailingRectSource.width)
           );
-          const split = computeRightTailSplit(trailingRectSource.width, preferredTail);
+          const split = computeRightBiasedTailSplit(trailingRectSource.width, preferredTail);
           trailingClipRect = {
             x: trailingRectSource.x + split.baseClipWidth,
             y: trailingRectSource.y,
             width: split.tailWidth,
             height: trailingRectSource.height,
           };
+
+          // Не даём хвосту гласной пересекать центральную часть подписной формы:
+          // правая часть должна быть действительно правее основной массы subscript.
+          if (subscriptRect) {
+            const safeStartX = subscriptRect.x + subscriptRect.width * 0.58;
+            const clampedX = Math.max(trailingClipRect.x, safeStartX);
+            const rightEdge = trailingRectSource.x + trailingRectSource.width;
+            trailingClipRect.x = clampedX;
+            trailingClipRect.width = Math.max(24, rightEdge - clampedX);
+          }
         }
       }
 
