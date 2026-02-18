@@ -234,6 +234,17 @@ function componentToClipRect(component) {
   };
 }
 
+function expandClipRect(rect, { left = 0, right = 0, top = 0, bottom = 0 } = {}) {
+  if (!rect) return null;
+
+  const x = rect.x - Math.max(0, left);
+  const y = rect.y - Math.max(0, top);
+  const width = Math.max(0, rect.width + Math.max(0, left) + Math.max(0, right));
+  const height = Math.max(0, rect.height + Math.max(0, top) + Math.max(0, bottom));
+
+  return { x, y, width, height };
+}
+
 /** semantic zone normalizer for component/direct parts */
 function semanticZoneByCategoryAndCp(category, ch) {
   const cp = cpOf(ch);
@@ -987,6 +998,12 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         sortedNonBase[0] ||
         subscriptComponent;
       const subscriptRect = componentToClipRect(subscriptComponent);
+      const expandedSubscriptRect = expandClipRect(subscriptRect, {
+        left: 26,
+        right: 34,
+        top: 24,
+        bottom: 42,
+      });
 
       const baseRightEdge = getComponentRightEdge(baseComponent);
       const vowelTrailingComponent =
@@ -1013,6 +1030,13 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
           height: bbHeight,
         };
       } else {
+        // Даже если правый хвост уходит на non-base компонент,
+        // всё равно немного режем правую часть базового компонента,
+        // чтобы визуально отделить гласную справа от основы.
+        const preferredBaseTail = getPreferredRightTailWidth(dependentCpForCoeng, bbWidth);
+        const baseSplit = computeRightTailSplit(bbWidth, preferredBaseTail);
+        baseClipWidth = baseSplit.baseClipWidth;
+
         const trailingRectSource = componentToClipRect(vowelTrailingComponent);
         if (trailingRectSource) {
           const preferredTail = getPreferredRightTailWidth(
@@ -1030,11 +1054,12 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
           // Не даём хвосту гласной пересекать центральную часть подписной формы:
           // правая часть должна быть действительно правее основной массы subscript.
           if (subscriptRect) {
-            const safeStartX = subscriptRect.x + subscriptRect.width * 0.64;
-            const clampedX = Math.max(trailingClipRect.x, safeStartX);
+            const safeStartX = subscriptRect.x + subscriptRect.width * 0.54;
             const rightEdge = trailingRectSource.x + trailingRectSource.width;
+            const maxStartX = rightEdge - 48;
+            const clampedX = Math.min(maxStartX, Math.max(trailingClipRect.x, safeStartX));
             trailingClipRect.x = clampedX;
-            trailingClipRect.width = Math.max(24, rightEdge - clampedX);
+            trailingClipRect.width = Math.max(48, rightEdge - clampedX);
           }
         }
       }
@@ -1060,7 +1085,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         color: getColorForCategory(subscriptMetaForCoeng.category, subscriptMetaForCoeng.char),
         zone: 'split_subscript',
         hbGlyphId: subscriptComponent?.hbGlyphId,
-        clipRect: componentToClipRect(subscriptComponent),
+        clipRect: expandedSubscriptRect || subscriptRect,
       });
 
       const depZones = getVowelZones(dependentCpForCoeng);
