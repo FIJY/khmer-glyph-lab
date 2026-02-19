@@ -20,6 +20,16 @@ import { getConsonantBodyRect, getRawMetrics, getVowelMetrics } from './khmerCon
  * 6) Normalize zones for component/direct parts to semantic zones.
  * 7) Auto-add clipRect from component.bb where possible.
  * 8) Stabilize coeng+subscript chains (e.g. ន្ត្រ) with deterministic non-base allocation.
+ *
+ * v5 (current):
+ * 9) Right-part splitting for dependent vowels (ា, ៅ, ោ) now uses a percentage
+ *    of the base glyph's height. Default 35%, but reduced to 20% when a subscript
+ *    consonant is present (to keep the vowel visually attached to the subscript).
+ *
+ * v6 fix:
+ * 10) When a base consonant and a subscript consonant belong to different glyphs
+ *     (e.g. ញ + ្ញ), the base is now clipped to its body area so that it does not
+ *     overlap the subscript. This uses cluster‑wide detection of subscript consonants.
  */
 
 const ENABLE_NARROW_STACKED_MODE = true;
@@ -30,6 +40,7 @@ const ENABLE_NARROW_STACKED_MODE = true;
  */
 const STACKED_CLUSTER_WHITELIST = new Set([
   // 'ខ្ញុំ',
+  'ញ្ញុំ', 'តោ', 'ន្ត្រា', 'ក្សា'
 ]);
 
 /**
@@ -38,6 +49,37 @@ const STACKED_CLUSTER_WHITELIST = new Set([
 const STACKED_CLUSTER_BLACKLIST = new Set([
   // '...'
 ]);
+
+// v5: right‑tail width is a percentage of the base glyph's height.
+// Default factor (no subscript) = 0.35 (35%).
+// When a subscript consonant is present, use a smaller factor = 0.20.
+const DEFAULT_TAIL_HEIGHT_FACTOR = 0.35;
+const SUBSCRIPT_TAIL_HEIGHT_FACTOR = 0.20;
+
+// Still used for subscript clipping (unchanged)
+const SUBSCRIPT_WIDTH_MULTIPLIER = 1.2;
+const SUBSCRIPT_CLAMP_FRACTION = 0.8;
+
+/**
+ * Returns the desired width for the right tail (vowel part) based on the
+ * given height of the base component and whether a subscript is present.
+ */
+function getDesiredTailWidthFromHeight(height, hasSubscript) {
+  const factor = hasSubscript ? SUBSCRIPT_TAIL_HEIGHT_FACTOR : DEFAULT_TAIL_HEIGHT_FACTOR;
+  return Math.max(24, Math.floor(height * factor));
+}
+
+/**
+ * Simple splitter: given total width and desired tail width,
+ * returns base width and tail width (tail cannot exceed total width).
+ */
+function splitByDesiredTailWidth(totalWidth, desiredTailWidth) {
+  const width = Math.max(0, totalWidth);
+  if (width <= 0) return { baseClipWidth: 0, tailWidth: 0 };
+  const tail = Math.min(width, Math.max(0, desiredTailWidth));
+  const base = width - tail;
+  return { baseClipWidth: base, tailWidth: tail };
+}
 
 function getComponentArea(component) {
   if (!component?.bb) return 0;
@@ -71,9 +113,6 @@ function pickBaseForCoengRightSplit(components, consonantCP) {
     }
   }
 
-  // Для цепочек base + coeng + subscript + (ា/ោ/ៅ)
-  // база обычно расположена выше подписных форм.
-  // Поэтому используем минимальный centerY как устойчивый fallback.
   return [...list].sort((a, b) => {
     const dy = getComponentCenterY(a) - getComponentCenterY(b);
     if (dy !== 0) return dy;
@@ -90,22 +129,7 @@ function pickLargestComponent(components) {
   return [...components].sort((a, b) => getComponentArea(b) - getComponentArea(a))[0] || components[0];
 }
 
-/**
- * Найти компонент, соответствующий базовой согласной.
- *
- * Стратегия (по приоритету):
- * 1. Сопоставить hbGlyphId компонента с известным glyphId из метрик шрифта.
- *    Это единственный надёжный способ — не зависит от площади/позиции.
- * 2. Fallback: наибольшая площадь (старое поведение).
- *
- * @param {Array} components — компоненты глифа от сервера
- * @param {number|null} consonantCP — codepoint базовой согласной
- * @returns {object} компонент
- */
 function getComponentLeftEdge(comp) {
-  // bb.x1 — координаты пути в локальной системе (относительно точки пера 0,0).
-  // comp.x — смещение пера от HarfBuzz в пространстве кластера.
-  // Реальная левая граница = comp.x + bb.x1.
   const penX = Number.isFinite(comp?.x) ? comp.x : 0;
   if (comp?.bb && Number.isFinite(comp.bb.x1)) return penX + comp.bb.x1;
   return penX;
@@ -120,51 +144,43 @@ function getComponentCenterX(comp) {
 }
 
 // ─── Классификация зависимых гласных и диакритик по зонам ──────────────────
-//
-// Каждый codepoint маппируется в набор зон где он может рендериться.
-// Для многозонных гласных (ើ, ឿ, ោ...) конкретный компонент определяется
-// геометрически относительно тела базовой согласной.
 const VOWEL_ZONES = {
-  // Зависимые гласные
-  0x17B6: ['RIGHT'],                           // ា
-  0x17B7: ['TOP'],                             // ិ
-  0x17B8: ['TOP'],                             // ី
-  0x17B9: ['TOP'],                             // ឹ
-  0x17BA: ['TOP'],                             // ឺ
-  0x17BB: ['BOTTOM'],                          // ុ
-  0x17BC: ['BOTTOM'],                          // ូ
-  0x17BD: ['BOTTOM'],                          // ួ
-  0x17BE: ['LEFT', 'TOP'],                     // ើ
-  0x17BF: ['LEFT', 'RIGHT', 'TOP', 'BOTTOM'], // ឿ
-  0x17C0: ['LEFT', 'RIGHT', 'TOP', 'BOTTOM'], // ៀ
-  0x17C1: ['LEFT'],                            // េ
-  0x17C2: ['LEFT'],                            // ែ
-  0x17C3: ['LEFT'],                            // ៃ
-  0x17C4: ['LEFT', 'RIGHT'],                   // ោ
-  0x17C5: ['LEFT', 'RIGHT'],                   // ៅ
-  // Диакритики и знаки
-  0x17C6: ['TOP'],                             // ំ
-  0x17C7: ['RIGHT'],                           // ះ
-  0x17C8: ['RIGHT'],                           // ៈ
-  0x17C9: ['TOP'],                             // ៉
-  0x17CA: ['TOP'],                             // ៊
-  0x17CB: ['TOP'],                             // ់
-  0x17CC: ['TOP'],                             // ៌
-  0x17CD: ['TOP'],                             // ៍
-  0x17CE: ['TOP'],                             // ៎
-  0x17CF: ['TOP'],                             // ៏
-  0x17D0: ['TOP'],                             // ័
-  0x17D1: ['TOP'],                             // ៑
-  0x17D3: ['TOP'],                             // ៓
-  0x17DD: ['TOP'],                             // ៝
+  0x17B6: ['RIGHT'],
+  0x17B7: ['TOP'],
+  0x17B8: ['TOP'],
+  0x17B9: ['TOP'],
+  0x17BA: ['TOP'],
+  0x17BB: ['BOTTOM'],
+  0x17BC: ['BOTTOM'],
+  0x17BD: ['BOTTOM'],
+  0x17BE: ['LEFT', 'TOP'],
+  0x17BF: ['LEFT', 'RIGHT', 'TOP', 'BOTTOM'],
+  0x17C0: ['LEFT', 'RIGHT', 'TOP', 'BOTTOM'],
+  0x17C1: ['LEFT'],
+  0x17C2: ['LEFT'],
+  0x17C3: ['LEFT'],
+  0x17C4: ['LEFT', 'RIGHT'],
+  0x17C5: ['LEFT', 'RIGHT'],
+  0x17C6: ['TOP'],
+  0x17C7: ['RIGHT'],
+  0x17C8: ['RIGHT'],
+  0x17C9: ['TOP'],
+  0x17CA: ['TOP'],
+  0x17CB: ['TOP'],
+  0x17CC: ['TOP'],
+  0x17CD: ['TOP'],
+  0x17CE: ['TOP'],
+  0x17CF: ['TOP'],
+  0x17D0: ['TOP'],
+  0x17D1: ['TOP'],
+  0x17D3: ['TOP'],
+  0x17DD: ['TOP'],
 };
 
 function getVowelZones(cp) {
-  return VOWEL_ZONES[cp] || ['RIGHT']; // unknown → право по умолчанию
+  return VOWEL_ZONES[cp] || ['RIGHT'];
 }
 
-// Для pickBaseComponent: гласные у которых есть LEFT-компонент —
-// "самый левый = база" ненадёжно.
 const HAS_LEFT_COMPONENT = new Set(
   Object.entries(VOWEL_ZONES)
     .filter(([, zones]) => zones.includes('LEFT'))
@@ -172,7 +188,6 @@ const HAS_LEFT_COMPONENT = new Set(
 );
 
 function hasPrepositive(charMeta) {
-  // Любая гласная с LEFT-компонентом мешает стратегии "самый левый = база"
   return (charMeta || []).some(m => {
     const cp = m?.char?.codePointAt(0) ?? m?.unit?.codePoints?.[0];
     return HAS_LEFT_COMPONENT.has(cp);
@@ -183,7 +198,6 @@ function pickBaseComponent(components, consonantCP, charMeta) {
   if (!components?.length) return null;
   if (components.length === 1) return components[0];
 
-  // Стратегия 1: по glyphId из метрик (надёжно если шейпер не заменил глиф через GSUB)
   if (consonantCP != null) {
     const metrics = getRawMetrics();
     const knownGlyphId = metrics?.consonants?.[consonantCP]?.glyphId;
@@ -193,14 +207,11 @@ function pickBaseComponent(components, consonantCP, charMeta) {
     }
   }
 
-  // Стратегия 2: самый левый компонент = базовая согласная.
-  // Исключение: препозитивные гласные стоят левее базы.
   if (!hasPrepositive(charMeta)) {
     const byLeft = [...components].sort((a, b) => getComponentLeftEdge(a) - getComponentLeftEdge(b));
     return byLeft[0] || components[0];
   }
 
-  // Стратегия 3: площадь — база обычно крупнее гласной
   return [...components].sort((a, b) => getComponentArea(b) - getComponentArea(a))[0] || components[0];
 }
 
@@ -212,9 +223,6 @@ function cpOf(ch) {
   return ch ? ch.codePointAt(0) : null;
 }
 
-/**
- * Найти codepoint базовой согласной из charMeta.
- */
 function findBaseCP(charMeta) {
   const base = (charMeta || []).find(
     (m) => m.category === 'base_consonant' || m.category === 'independent_vowel'
@@ -222,19 +230,21 @@ function findBaseCP(charMeta) {
   return cpOf(base?.char) ?? null;
 }
 
-/** Converts component bb -> clipRect */
-function componentToClipRect(component) {
+function componentToClipRect(component, category = null) {
   if (!component?.bb) return null;
   const { x1 = 0, y1 = 0, x2 = 0, y2 = 0 } = component.bb;
+  let width = Math.max(0, x2 - x1);
+  if (category === 'subscript_consonant') {
+    width *= SUBSCRIPT_WIDTH_MULTIPLIER;
+  }
   return {
     x: x1,
     y: y1,
-    width: Math.max(0, x2 - x1),
+    width,
     height: Math.max(0, y2 - y1),
   };
 }
 
-/** semantic zone normalizer for component/direct parts */
 function semanticZoneByCategoryAndCp(category, ch) {
   const cp = cpOf(ch);
 
@@ -243,7 +253,6 @@ function semanticZoneByCategoryAndCp(category, ch) {
   if (category === 'diacritic_sign' || category === 'diacritic') return 'TOP';
 
   if (category === 'dependent_vowel') {
-    // explicit low vowels
     if (cp === 0x17BB || cp === 0x17BC || cp === 0x17BD) return 'BOTTOM';
 
     const zones = getVowelZones(cp);
@@ -261,14 +270,12 @@ function normalizePart(part) {
   if (!part) return part;
   const p = { ...part };
 
-  // Normalize zone from generic technical zone to semantic when needed
   if (p.zone === 'component' || p.zone === 'direct' || p.zone === 'UNKNOWN' || !p.zone) {
     p.zone = semanticZoneByCategoryAndCp(p.category, p.char);
   }
 
-  // If clip missing but component bb exists, set it
   if (!p.clipRect && p.component?.bb) {
-    p.clipRect = componentToClipRect(p.component);
+    p.clipRect = componentToClipRect(p.component, p.category);
   }
 
   return p;
@@ -289,69 +296,52 @@ function normalizeAndFilterParts(parts) {
     .filter((p) => !isIgnorablePart(p));
 }
 
-function computeRightTailSplit(totalWidth, preferredTailWidth) {
-  const width = Math.max(0, Number(totalWidth) || 0);
-  if (width <= 0) {
-    return { baseClipWidth: 0, tailWidth: 0 };
-  }
+// --- The old fixed-tail-width helpers are no longer used, kept for reference ---
+/*
+const FIXED_TAIL_WIDTHS = {
+  0x17B6: 120,
+  0x17C4: 140,
+  0x17C5: 130,
+};
 
-  // Всегда сохраняем заметную ширину базы и правого хвоста,
-  // чтобы не получать "пропадающие" части при узких bbox.
-  const minSlice = Math.max(24, width * 0.15);
-  const maxTail = Math.max(minSlice, width - minSlice);
-  const tail = Math.min(maxTail, Math.max(minSlice, preferredTailWidth || 0));
-  const base = Math.max(minSlice, width - tail);
-
-  return {
-    baseClipWidth: Math.min(base, width),
-    tailWidth: Math.min(tail, width),
-  };
-}
-
-function computeRightBiasedTailSplit(totalWidth, preferredTailWidth) {
-  const width = Math.max(0, Number(totalWidth) || 0);
-  if (width <= 0) {
-    return { baseClipWidth: 0, tailWidth: 0 };
-  }
-
-  // Для случая, когда правый хвост слит с подписной формой,
-  // сдвигаем границу правее центра, чтобы хвост не "съедал" субскрипт.
-  const generic = computeRightTailSplit(width, preferredTailWidth);
-  const minBase = Math.max(generic.baseClipWidth, width * 0.66);
-  const baseClipWidth = Math.min(width - 24, Math.max(24, minBase));
-
-  return {
-    baseClipWidth,
-    tailWidth: Math.max(24, width - baseClipWidth),
-  };
-}
-
-
-function getPreferredRightTailWidth(vowelCp, baseWidth) {
-  const fallbackWidth =
-    vowelCp === 0x17B6
-      ? Math.max(90, baseWidth * 0.28)
-      : (vowelCp === 0x17C4 || vowelCp === 0x17C5)
-        ? Math.max(110, baseWidth * 0.32)
-        : Math.max(80, baseWidth * 0.26);
-
-  const metricsTail = getVowelMetrics(vowelCp)?.delta?.right;
-  if (metricsTail != null && metricsTail > 10) {
-    // Метрики шрифта полезны, но иногда дают слишком узкий хвост.
-    // Для визуальной сегментации держим минимум не уже типового fallback.
-    return Math.max(fallbackWidth, metricsTail);
-  }
-
-  // Эти три зависимые гласные имеют правую "хвостовую" часть.
-  // Ширина не константна между шрифтами, поэтому используем устойчивый диапазон.
-  return fallbackWidth;
-}
+function getPreferredRightTailWidth(vowelCp, baseWidth) { ... }
+function computeRightTailSplit(totalWidth, preferredTailWidth) { ... }
+function computeRightBiasedTailSplit(totalWidth, preferredTailWidth) { ... }
+*/
 
 /**
- * Narrow stacked layout для слитного кхмерского кластера:
- * base + coeng + subscript + lower dependent vowel + top diacritic.
- * Типичный пример: ខ្ញុំ
+ * Adjusts the clipRect of a base consonant (or independent vowel) part
+ * to the body area if a subscript consonant exists anywhere in the same cluster.
+ * This prevents overlapping between the base and a subscript that lives in a separate glyph.
  */
+function adjustBaseClipRect(part, clusterHasSubscript) {
+  if (!clusterHasSubscript) return part;
+  if (!(part.category === 'base_consonant' || part.category === 'independent_vowel')) return part;
+  if (!part.component?.bb) return part;
+
+  const baseCP = part.char?.codePointAt(0) ?? null;
+  if (!baseCP) return part;
+
+  const bodyRect = getConsonantBodyRect(part.component.bb, baseCP);
+  if (!bodyRect || bodyRect.bodyY1 >= bodyRect.bodyY2) return part; // sanity
+
+  let clip = part.clipRect;
+  if (!clip) {
+    clip = {
+      x: part.component.bb.x1,
+      y: bodyRect.bodyY1,
+      width: Math.max(0, part.component.bb.x2 - part.component.bb.x1),
+      height: bodyRect.bodyY2 - bodyRect.bodyY1,
+    };
+  } else {
+    // preserve existing x and width, only adjust vertical
+    clip.y = bodyRect.bodyY1;
+    clip.height = bodyRect.bodyY2 - bodyRect.bodyY1;
+  }
+  part.clipRect = clip;
+  return part;
+}
+
 function buildStackedClusterParts(glyph, charMeta) {
   const stackBaseCP = findBaseCP(charMeta);
   const mainComp =
@@ -369,7 +359,6 @@ function buildStackedClusterParts(glyph, charMeta) {
   const h = Math.max(0, y2 - y1);
   if (w <= 0 || h <= 0) return null;
 
-  // anchor on base body
   const baseCP = findBaseCP(charMeta);
   const bodyRect = getConsonantBodyRect({ x1, y1, x2, y2 }, baseCP);
 
@@ -377,7 +366,6 @@ function buildStackedClusterParts(glyph, charMeta) {
   const bodyY2 = bodyRect.bodyY2;
   const bodyH = Math.max(1, bodyY2 - bodyY1);
 
-  // Zones
   const yTop = y1;
   const topH = Math.max(1, bodyY1 - y1);
   const yMid = bodyY1;
@@ -385,9 +373,8 @@ function buildStackedClusterParts(glyph, charMeta) {
   const yLow = bodyY2;
   const lowH = Math.max(1, y2 - bodyY2);
 
-  // low split: coeng left, subscript right
   const coengW = Math.max(50, w * 0.28);
-  const restW = Math.max(0, w - coengW);
+  const restW = Math.max(0, w - coengW) * SUBSCRIPT_WIDTH_MULTIPLIER;
 
   const parts = [];
 
@@ -437,10 +424,6 @@ function buildStackedClusterParts(glyph, charMeta) {
   return parts;
 }
 
-/**
- * Stable allocator for non-base chains (coeng/subscript repeats).
- * Example: ន្ត្រ
- */
 function createNonBaseAllocator(components, baseCandidate) {
   const nonBase = (components || []).filter((c) => c !== baseCandidate);
   let i = 0;
@@ -482,7 +465,6 @@ function pickComponentForCategory(glyph, category, charIdx, charMeta, allocator)
     return baseCandidate;
   }
 
-  // chain-sensitive mapping for coeng/subscript
   if (category === 'coeng' || category === 'subscript_consonant') {
     if (allocator) {
       const pick = allocator.next();
@@ -495,7 +477,6 @@ function pickComponentForCategory(glyph, category, charIdx, charMeta, allocator)
 
   if (category === 'dependent_vowel') {
     if (hasSubscript) {
-      // prefer non-base; for chains, take current non-base if allocator has progressed
       if (allocator) {
         const peek = allocator.first();
         if (peek) return peek;
@@ -560,7 +541,6 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
     return normalizeAndFilterParts(geoParts);
   }
 
-  // Use eduUnits instead of glyph.chars
   const glyphCps = new Set(glyph.codePoints || []);
   const relevantUnits = (units || []).filter((u) => {
     const codePointHit = (u.codePoints || []).some((cp) => glyphCps.has(cp));
@@ -585,7 +565,15 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
 
   console.log('[MAPPER] Char meta from units:', charMeta);
 
-  // FIX A: cluster without base consonant
+  // --- NEW: determine if the whole cluster contains a subscript consonant ---
+  const clusterUnits = (units || []).filter(u =>
+    Number.isInteger(u?.sourceStart) && Number.isInteger(u?.sourceEnd) &&
+    Number.isInteger(glyph?.clusterStart) && Number.isInteger(glyph?.clusterEnd) &&
+    u.sourceStart < glyph.clusterEnd && u.sourceEnd > glyph.clusterStart
+  );
+  const clusterHasSubscript = clusterUnits.some(u => u.category === 'subscript_consonant');
+  // -------------------------------------------------------------------------
+
   const clusterHasBase =
     charMeta.some((m) => m.category === 'base_consonant' || m.category === 'independent_vowel');
 
@@ -599,7 +587,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         m.category === 'diacritic'
       ) || charMeta[idx] || charMeta[0];
 
-      return {
+      const part = {
         partId: `${glyph.id}-direct-${idx}`,
         component: comp,
         char: meta?.char || '',
@@ -607,14 +595,14 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         color: getColorForCategory(meta?.category || 'other', meta?.char || ''),
         zone: 'direct',
         hbGlyphId: comp?.hbGlyphId,
-        clipRect: componentToClipRect(comp),
+        clipRect: componentToClipRect(comp, meta?.category),
       };
+      return part;
     });
 
     return normalizeAndFilterParts(directParts);
   }
 
-  // NARROW STACKED MODE
   if (ENABLE_NARROW_STACKED_MODE) {
     const clusterText = getClusterText(charMeta);
 
@@ -634,7 +622,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
     const depMeta = charMeta.find((m) => m.category === 'dependent_vowel');
     const depCp = cpOf(depMeta?.char);
 
-    const LOWER_DEP_VOWELS = new Set([0x17BB, 0x17BC]); // ុ ូ
+    const LOWER_DEP_VOWELS = new Set([0x17BB, 0x17BC]);
 
     const hasBase =
       hasCategory(charMeta, 'base_consonant') ||
@@ -673,7 +661,6 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
     }
   }
 
-  // Subscript + vowel combo rule
   const subscriptMeta = charMeta.find((item) => item.category === 'subscript_consonant');
   const vowelMeta = charMeta.find((item) => item.category === 'dependent_vowel');
   const comboRule =
@@ -698,7 +685,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
       const parts = [];
 
       if (baseMeta) {
-        parts.push({
+        const basePart = {
           partId: `${glyph.id}-base`,
           component: baseComp,
           char: baseMeta.char,
@@ -706,8 +693,11 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
           color: getColorForCategory(baseMeta.category, baseMeta.char),
           zone: 'combo_base',
           hbGlyphId: baseComp?.hbGlyphId,
-          clipRect: componentToClipRect(baseComp),
-        });
+          clipRect: componentToClipRect(baseComp, baseMeta.category),
+        };
+        // Apply body clipping if a subscript exists in the cluster
+        adjustBaseClipRect(basePart, clusterHasSubscript);
+        parts.push(basePart);
       }
 
       const subscriptComponents = glyph.components.filter((c) => c !== baseComp);
@@ -720,7 +710,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
           color: getColorForCategory(subscriptMeta.category, subscriptMeta.char),
           zone: 'combo_subscript',
           hbGlyphId: comp?.hbGlyphId,
-          clipRect: componentToClipRect(comp),
+          clipRect: componentToClipRect(comp, subscriptMeta.category),
         });
       });
 
@@ -728,8 +718,11 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         const bb = baseComp.bb;
         const bbWidth = Math.max(0, (bb.x2 || 0) - (bb.x1 || 0));
         const bbHeight = Math.max(0, (bb.y2 || 0) - (bb.y1 || 0));
-        const rawVowelWidth = Math.max(120, bbWidth * 0.3);
-        const { baseClipWidth, tailWidth: vowelWidth } = computeRightTailSplit(bbWidth, rawVowelWidth);
+
+        // Check if subscript exists in this cluster (we already have clusterHasSubscript)
+        const hasSubscript = clusterHasSubscript;
+        const preferredTail = getDesiredTailWidthFromHeight(bbHeight, hasSubscript);
+        const { baseClipWidth, tailWidth } = splitByDesiredTailWidth(bbWidth, preferredTail);
 
         if (parts[0]) {
           parts[0].clipRect = {
@@ -738,6 +731,8 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
             width: baseClipWidth,
             height: bbHeight,
           };
+          // Re-apply body clipping after width adjustment (the adjust function will preserve x/width)
+          adjustBaseClipRect(parts[0], clusterHasSubscript);
         }
 
         parts.push({
@@ -751,7 +746,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
           clipRect: {
             x: bb.x1 + baseClipWidth,
             y: bb.y1,
-            width: vowelWidth,
+            width: tailWidth,
             height: bbHeight,
           },
         });
@@ -762,7 +757,6 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
     }
   }
 
-  // Ligatures with dependent vowels
   const diacriticCategories = new Set(['diacritic_sign', 'diacritic']);
   const mainCharMeta = charMeta.filter((m) => !diacriticCategories.has(m.category));
 
@@ -816,19 +810,20 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
       const bbWidth = Math.max(0, (bb.x2 || 0) - (bb.x1 || 0));
       const bbHeight = Math.max(0, (bb.y2 || 0) - (bb.y1 || 0));
 
-      const vowelMetricsForSplit = getVowelMetrics(vowelCode);
-      const metricsTailWidth = vowelMetricsForSplit?.delta?.right;
-      const rawTailWidth = (metricsTailWidth != null && metricsTailWidth > 10)
-        ? Math.max(50, metricsTailWidth)
-        : Math.max(120, bbWidth * 0.35);
-      const { baseClipWidth, tailWidth } = computeRightTailSplit(bbWidth, rawTailWidth);
+      // Determine if there is a subscript consonant in the cluster
+      const hasSubscript = clusterHasSubscript;
+      const preferredTail = getDesiredTailWidthFromHeight(bbHeight, hasSubscript);
+      const { baseClipWidth, tailWidth } = splitByDesiredTailWidth(bbWidth, preferredTail);
 
-      const baseIsAlone = glyph.components.filter(c => c !== baseComponent).length === 0;
-      const baseClipRect = (isAALigature || baseIsAlone)
-        ? { x: bb.x1, y: bb.y1, width: baseClipWidth, height: bbHeight }
-        : { x: bb.x1, y: bb.y1, width: bbWidth, height: bbHeight };
+      // Always clip the base part to leave room for the vowel
+      const baseClipRect = {
+        x: bb.x1,
+        y: bb.y1,
+        width: baseClipWidth,
+        height: bbHeight,
+      };
 
-      parts.push({
+      const basePart = {
         partId: `${glyph.id}-base-main`,
         component: baseComponent,
         char: baseMeta.char,
@@ -837,12 +832,59 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         zone: 'split_base',
         hbGlyphId: baseComponent?.hbGlyphId,
         clipRect: baseClipRect,
-      });
+      };
+      adjustBaseClipRect(basePart, clusterHasSubscript);
+      parts.push(basePart);
 
-      const nonBaseCount = glyph.components.filter((c) => c !== baseComponent).length;
-      const needsGeometricTrailing = isAALigature || nonBaseCount === 0;
+      // Determine if this is a right-side vowel (ា, ៅ, ោ)
+      const isRightVowel = vowelCode === 0x17B6 || vowelCode === 0x17C4 || vowelCode === 0x17C5;
 
-      if (needsGeometricTrailing) {
+      if (isRightVowel) {
+        // For right vowels, handle left components (if any) using their own geometry,
+        // and then add a geometric tail for the right part.
+
+        const nonBaseComponents = glyph.components.filter((c) => c !== baseComponent);
+        if (nonBaseComponents.length > 0) {
+          const sortedNonBase = [...nonBaseComponents].sort(
+            (a, b) => getComponentLeftEdge(a) - getComponentLeftEdge(b)
+          );
+
+          const vowelCp = dependentMeta?.char?.codePointAt(0);
+          const vowelZones = getVowelZones(vowelCp);
+          const vowelHasLeft = vowelZones.includes('LEFT');
+          const baseCenterX = getComponentCenterX(baseComponent);
+
+          let spliceIdx = 1; // after split_base
+          sortedNonBase.forEach((comp) => {
+            // Determine if this component should be placed on the left side
+            let isLeftComp = false;
+            if (vowelHasLeft) {
+              // If vowel has left zone, components left of base center are left parts
+              isLeftComp = getComponentCenterX(comp) < baseCenterX;
+            } else {
+              // If no left zone, all non-base components are considered right and will be ignored
+              isLeftComp = false;
+            }
+
+            if (isLeftComp) {
+              const compClipRect = componentToClipRect(comp, dependentMeta.category);
+              parts.splice(spliceIdx, 0, {
+                partId: `${glyph.id}-vowel-left-${spliceIdx}`,
+                component: comp,
+                char: dependentMeta.char,
+                category: dependentMeta.category,
+                color: getColorForCategory(dependentMeta.category, dependentMeta.char),
+                zone: 'split_vowel_leading',
+                hbGlyphId: comp?.hbGlyphId,
+                clipRect: compClipRect,
+              });
+              spliceIdx++;
+            }
+            // Right components are ignored – they will be replaced by the geometric tail
+          });
+        }
+
+        // Add geometric tail for the right part
         parts.push({
           partId: `${glyph.id}-vowel-trailing`,
           component: baseComponent,
@@ -858,9 +900,8 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
             height: bbHeight,
           },
         });
-      }
-
-      if (!isAALigature) {
+      } else {
+        // For non-right vowels (left, top, bottom), use the existing logic that distributes non-base components
         const nonBaseComponents = glyph.components.filter((c) => c !== baseComponent);
 
         const sortedNonBase = [...nonBaseComponents].sort(
@@ -885,7 +926,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
             isLeftComp = getComponentCenterX(comp) < baseCenterX;
           }
 
-          const compClipRect = componentToClipRect(comp);
+          const compClipRect = componentToClipRect(comp, dependentMeta.category);
 
           if (isLeftComp) {
             parts.splice(spliceIdx, 0, {
@@ -925,7 +966,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
           color: getColorForCategory(meta.category, meta.char),
           zone: 'mark',
           hbGlyphId: comp?.hbGlyphId,
-          clipRect: componentToClipRect(comp),
+          clipRect: componentToClipRect(comp, meta.category),
         });
       });
 
@@ -958,11 +999,17 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
       const bb = baseComponent.bb;
       const bbWidth = Math.max(0, (bb.x2 || 0) - (bb.x1 || 0));
       const bbHeight = Math.max(0, (bb.y2 || 0) - (bb.y1 || 0));
+
+      // In this branch, subscript is definitely present (subscriptMetaForCoeng exists)
+      const hasSubscript = true;
+      const preferredTail = getDesiredTailWidthFromHeight(bbHeight, hasSubscript);
+      const split = splitByDesiredTailWidth(bbWidth, preferredTail);
+
       const structuredParts = [];
       let baseClipWidth = bbWidth;
       let trailingClipRect = null;
 
-      structuredParts.push({
+      const basePart = {
         partId: `${glyph.id}-coeng-base`,
         component: baseComponent,
         char: baseMetaForCoeng.char,
@@ -976,7 +1023,9 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
           width: bbWidth,
           height: bbHeight,
         },
-      });
+      };
+      adjustBaseClipRect(basePart, clusterHasSubscript);
+      structuredParts.push(basePart);
 
       const nonBase = (glyph.components || []).filter((c) => c !== baseComponent);
       const sortedNonBase = [...nonBase].sort((a, b) => getComponentCenterX(a) - getComponentCenterX(b));
@@ -986,7 +1035,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         sortedNonBase.find((c) => c !== subscriptComponent) ||
         sortedNonBase[0] ||
         subscriptComponent;
-      const subscriptRect = componentToClipRect(subscriptComponent);
+      const subscriptRect = componentToClipRect(subscriptComponent, 'subscript_consonant');
 
       const baseRightEdge = getComponentRightEdge(baseComponent);
       const vowelTrailingComponent =
@@ -1003,8 +1052,6 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         getComponentRightEdge(vowelTrailingComponent) >= baseRightEdge - 8;
 
       if (!trailingOnNonBase) {
-        const preferredTail = getPreferredRightTailWidth(dependentCpForCoeng, bbWidth);
-        const split = computeRightTailSplit(bbWidth, preferredTail);
         baseClipWidth = split.baseClipWidth;
         trailingClipRect = {
           x: bb.x1 + split.baseClipWidth,
@@ -1015,22 +1062,18 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
       } else {
         const trailingRectSource = componentToClipRect(vowelTrailingComponent);
         if (trailingRectSource) {
-          const preferredTail = getPreferredRightTailWidth(
-            dependentCpForCoeng,
-            Math.max(1, trailingRectSource.width)
-          );
-          const split = computeRightBiasedTailSplit(trailingRectSource.width, preferredTail);
+          // Use the same factor (subscript present) for the trailing part
+          const preferredTailSub = getDesiredTailWidthFromHeight(trailingRectSource.height, true);
+          const splitSub = splitByDesiredTailWidth(trailingRectSource.width, preferredTailSub);
           trailingClipRect = {
-            x: trailingRectSource.x + split.baseClipWidth,
+            x: trailingRectSource.x + splitSub.baseClipWidth,
             y: trailingRectSource.y,
-            width: split.tailWidth,
+            width: splitSub.tailWidth,
             height: trailingRectSource.height,
           };
 
-          // Не даём хвосту гласной пересекать центральную часть подписной формы:
-          // правая часть должна быть действительно правее основной массы subscript.
           if (subscriptRect) {
-            const safeStartX = subscriptRect.x + subscriptRect.width * 0.64;
+            const safeStartX = subscriptRect.x + subscriptRect.width * SUBSCRIPT_CLAMP_FRACTION;
             const clampedX = Math.max(trailingClipRect.x, safeStartX);
             const rightEdge = trailingRectSource.x + trailingRectSource.width;
             trailingClipRect.x = clampedX;
@@ -1049,7 +1092,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         color: getColorForCategory(coengMeta.category, coengMeta.char),
         zone: 'split_coeng',
         hbGlyphId: coengComponent?.hbGlyphId,
-        clipRect: componentToClipRect(coengComponent),
+        clipRect: componentToClipRect(coengComponent, coengMeta.category),
       });
 
       structuredParts.push({
@@ -1060,7 +1103,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         color: getColorForCategory(subscriptMetaForCoeng.category, subscriptMetaForCoeng.char),
         zone: 'split_subscript',
         hbGlyphId: subscriptComponent?.hbGlyphId,
-        clipRect: componentToClipRect(subscriptComponent),
+        clipRect: subscriptRect,
       });
 
       const depZones = getVowelZones(dependentCpForCoeng);
@@ -1108,7 +1151,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
           color: getColorForCategory(meta.category, meta.char),
           zone: 'mark',
           hbGlyphId: comp?.hbGlyphId,
-          clipRect: componentToClipRect(comp),
+          clipRect: componentToClipRect(comp, meta.category),
         });
       });
 
@@ -1116,10 +1159,8 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
     }
   }
 
-  // Default mapping
   console.log('[MAPPER] → Using simple mapping (no split)');
 
-  // allocator for chain-sensitive categories
   const metaBaseCP =
     charMeta.find(m => m.category === 'base_consonant' || m.category === 'independent_vowel')
       ?.char?.codePointAt(0) ?? null;
@@ -1175,11 +1216,11 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
           color: getColorForCategory(category, char),
           zone: 'component_multi',
           hbGlyphId: comp?.hbGlyphId,
-          clipRect: componentToClipRect(comp),
+          clipRect: componentToClipRect(comp, category),
         });
       });
     } else {
-      parts.push({
+      const part = {
         partId: `${glyph.id}-${unitIdx}`,
         component,
         char,
@@ -1187,8 +1228,11 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
         color: getColorForCategory(category, char),
         zone: 'component',
         hbGlyphId: component?.hbGlyphId,
-        clipRect: componentToClipRect(component),
-      });
+        clipRect: componentToClipRect(component, category),
+      };
+      // Apply body clipping for base consonants if a subscript exists in the cluster
+      adjustBaseClipRect(part, clusterHasSubscript);
+      parts.push(part);
     }
   }
 
@@ -1196,12 +1240,10 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
 }
 
 function mapSingleGlyphToParts(glyph, units, enableSegmentation) {
-  // 1) If server components exist — use them
   if (glyph.components && glyph.components.length > 0) {
     return getComponentBasedParts(glyph, units, enableSegmentation);
   }
 
-  // 2) Fused glyph (no components) — topology strategy
   if (!enableSegmentation) {
     return [createFullGlyphPart(glyph)];
   }
