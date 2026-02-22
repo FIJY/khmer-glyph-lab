@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { buildEduUnits } from "../lib/eduUnits.js";
 import { mapGlyphsToParts } from "../lib/glyphPartMapper.js";
-import { GREEN_STROKE_MODES, getStrokeForCategory } from "../lib/glyphCombinationRules.js";
+import { getStrokeForCategory } from "../lib/glyphCombinationRules.js";
 import { loadMetrics, isMetricsLoaded, getRawMetrics } from "../lib/khmerConsonantMetrics.js";
 
 const DEBUG = Boolean(globalThis.window?.__EDU_DEBUG__);
@@ -21,7 +21,7 @@ export default function VisualDecoderLab() {
   const [fontOptions, setFontOptions] = useState([]);
   const [selectedFont, setSelectedFont] = useState('auto');
   const [metricsReady, setMetricsReady] = useState(false);
-  const [greenStrokeMode, setGreenStrokeMode] = useState(GREEN_STROKE_MODES.all);
+  const [greenStrokeMode, setGreenStrokeMode] = useState('all');
 
   const units = useMemo(() => buildEduUnits(text), [text]);
 
@@ -241,13 +241,13 @@ export default function VisualDecoderLab() {
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🟢 Зеленые контуры для:</span>
             <select value={greenStrokeMode} onChange={(e) => setGreenStrokeMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
-              <option value={GREEN_STROKE_MODES.all}>Всех категорий</option>
-              <option value={GREEN_STROKE_MODES.consonants}>Только согласных</option>
-              <option value={GREEN_STROKE_MODES.subscripts}>Только подписных</option>
-              <option value={GREEN_STROKE_MODES.vowels}>Только гласных</option>
-              <option value={GREEN_STROKE_MODES.diacritics}>Только диакритик</option>
-              <option value={GREEN_STROKE_MODES.coeng}>Только coeng</option>
-              <option value={GREEN_STROKE_MODES.numerals}>Только цифр</option>
+              <option value="all">Всех категорий</option>
+              <option value="consonants">Только согласных</option>
+              <option value="subscripts">Только подписных</option>
+              <option value="vowels">Только гласных</option>
+              <option value="diacritics">Только диакритик</option>
+              <option value="coeng">Только coeng</option>
+              <option value="numerals">Только цифр</option>
             </select>
           </label>
           <span style={{ fontSize: '12px', color: '#0f766e' }}>
