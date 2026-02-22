@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { buildEduUnits } from "../lib/eduUnits.js";
 import { mapGlyphsToParts } from "../lib/glyphPartMapper.js";
+import { GREEN_STROKE_MODES, getStrokeForCategory } from "../lib/glyphCombinationRules.js";
 import { loadMetrics, isMetricsLoaded, getRawMetrics } from "../lib/khmerConsonantMetrics.js";
 
 const DEBUG = Boolean(globalThis.window?.__EDU_DEBUG__);
@@ -20,6 +21,7 @@ export default function VisualDecoderLab() {
   const [fontOptions, setFontOptions] = useState([]);
   const [selectedFont, setSelectedFont] = useState('auto');
   const [metricsReady, setMetricsReady] = useState(false);
+  const [greenStrokeMode, setGreenStrokeMode] = useState(GREEN_STROKE_MODES.all);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
 
@@ -234,6 +236,24 @@ export default function VisualDecoderLab() {
             Разделяет составные глифы на части по геометрии (если нет компонент от сервера)
           </span>
         </div>
+
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#ecfeff', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🟢 Зеленые контуры для:</span>
+            <select value={greenStrokeMode} onChange={(e) => setGreenStrokeMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
+              <option value={GREEN_STROKE_MODES.all}>Всех категорий</option>
+              <option value={GREEN_STROKE_MODES.consonants}>Только согласных</option>
+              <option value={GREEN_STROKE_MODES.subscripts}>Только подписных</option>
+              <option value={GREEN_STROKE_MODES.vowels}>Только гласных</option>
+              <option value={GREEN_STROKE_MODES.diacritics}>Только диакритик</option>
+              <option value={GREEN_STROKE_MODES.coeng}>Только coeng</option>
+              <option value={GREEN_STROKE_MODES.numerals}>Только цифр</option>
+            </select>
+          </label>
+          <span style={{ fontSize: '12px', color: '#0f766e' }}>
+            Невыбранные категории получают альтернативный контур по типу символа
+          </span>
+        </div>
       </div>
 
       {error ? <p style={{ color: "crimson", fontWeight: "bold" }}>{error}</p> : null}
@@ -251,7 +271,6 @@ export default function VisualDecoderLab() {
         {glyphsWithParts.map((glyph) => (
           <g key={glyph.id}>
             {glyph.parts.map((part) => {
-              const isSelected = glyph.id === selectedGlyphId && part.char === selectedChar;
 
               let xPos, yPos, pathData;
               if (part.component) {
@@ -270,6 +289,10 @@ export default function VisualDecoderLab() {
                 Number.isFinite(cr.width) && Number.isFinite(cr.height);
 
               const clipId = `clip-${part.partId}`;
+              const isSelected = selectedGlyphId === glyph.id && selectedChar === part.char;
+              const categoryStroke = getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
+              const strokeColor = isSelected ? '#1d4ed8' : categoryStroke;
+              const strokeWidth = isSelected ? '30' : '14';
 
               return (
                 <g key={part.partId}>
@@ -293,8 +316,8 @@ export default function VisualDecoderLab() {
                       fill={isSelected ? '#3b82f6' : part.color}
                       transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${xPos}, ${yPos})`}
                       clipPath={isClipValid ? `url(#${clipId})` : undefined}
-                      stroke={isSelected ? '#1d4ed8' : 'none'}
-                      strokeWidth={isSelected ? '30' : '0'}
+                      stroke={strokeColor}
+                      strokeWidth={strokeWidth}
                       opacity={0.9}
                     />
                     {isClipValid && (
