@@ -72,6 +72,23 @@ export function getColorForCategory(category, char) {
   return '#9ca3af'; // Серый
 }
 
+export function getStrokeForCategory(category, char) {
+  if (category === 'base_consonant' || category === 'subscript_consonant') {
+    const series = getKhmerConsonantSeries(char);
+    return series === 'a_series' ? '#16a34a' : '#dc2626';
+  }
+
+  if (category === 'dependent_vowel' || category === 'independent_vowel') {
+    return '#dc2626';
+  }
+
+  if (category === 'diacritic_sign' || category === 'diacritic' || category === 'coeng' || category === 'numeral') {
+    return '#16a34a';
+  }
+
+  return '#6b7280';
+}
+
 export const BELOW_SPLIT_VOWELS = new Set([
   0x17bb, // ុ
   0x17bc, // ូ
