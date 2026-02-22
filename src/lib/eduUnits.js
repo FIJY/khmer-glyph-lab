@@ -8,49 +8,59 @@ import {
 function splitTokenToAtoms(token, tokenStart = 0) {
   const chars = Array.from(token);
   const units = [];
+  const COENG_CP = 0x17D2;
   let localOffset = 0;
 
   for (let i = 0; i < chars.length; i += 1) {
     const ch = chars[i];
-    const prev = chars[i - 1] || '';
-    const category = getKhmerGlyphCategory(ch, prev);
+    const chCp = ch.codePointAt(0);
+    const prev = i > 0 ? chars[i - 1] : null;
+    const prevCp = prev ? prev.codePointAt(0) : null;
 
-    // v2: coeng + consonant => TWO units (coeng + subscript_consonant)
-    if (category === 'coeng' && chars[i + 1] && isKhmerConsonantChar(chars[i + 1])) {
+    let category = getKhmerGlyphCategory(ch, prev);
+
+    const isCoengMark = chCp === COENG_CP;
+
+    // Special case: coeng mark + consonant => coeng + subscript_consonant
+    if ((isCoengMark || category === 'coeng') && chars[i + 1] && isKhmerConsonantChar(chars[i + 1])) {
       const nextCh = chars[i + 1];
-
-      const coengStart = tokenStart + localOffset;
-      const coengLen = ch.length;
-
-      // 1) coeng as standalone unit
       units.push({
         text: ch,
-        chars: [ch],
-        codePoints: [ch.codePointAt(0)],
         category: 'coeng',
-        sourceStart: coengStart,
-        sourceEnd: coengStart + coengLen
+        codePoints: [COENG_CP],
+        sourceStart: tokenStart + localOffset,
+        sourceEnd: tokenStart + localOffset + ch.length,
       });
-
-      localOffset += coengLen;
-
-      const subStart = tokenStart + localOffset;
-      const subLen = nextCh.length;
-
-      // 2) following consonant as subscript_consonant
       units.push({
         text: nextCh,
-        chars: [nextCh],
-        codePoints: [nextCh.codePointAt(0)],
         category: 'subscript_consonant',
-        sourceStart: subStart,
-        sourceEnd: subStart + subLen
+        codePoints: [nextCh.codePointAt(0)],
+        sourceStart: tokenStart + localOffset + ch.length,
+        sourceEnd: tokenStart + localOffset + ch.length + nextCh.length,
       });
-
-      localOffset += subLen;
+      localOffset += ch.length + nextCh.length;
       i += 1;
       continue;
     }
+
+    // Coeng mark without a following consonant (rare, but happens in dirty input):
+    // keep it as a standalone "coeng" unit so it doesn't get misclassified as a diacritic.
+    if (isCoengMark) {
+      units.push({
+        text: ch,
+        category: 'coeng',
+        codePoints: [COENG_CP],
+        sourceStart: tokenStart + localOffset,
+        sourceEnd: tokenStart + localOffset + ch.length,
+      });
+      localOffset += ch.length;
+      continue;
+    }
+
+    // Normalize: U+17D2 is the only real "coeng" mark.
+    // If something non-U+17D2 is tagged as "coeng", it's actually a consonant in subscript role.
+    if (category === 'coeng' && isKhmerConsonantChar(ch)) category = 'subscript_consonant';
+    if (prevCp === COENG_CP && isKhmerConsonantChar(ch)) category = 'subscript_consonant';
 
     const chStart = tokenStart + localOffset;
     const baseUnit = {
