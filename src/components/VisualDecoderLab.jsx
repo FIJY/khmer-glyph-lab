@@ -198,8 +198,8 @@ export default function VisualDecoderLab() {
   const heroPartsPreview = useMemo(() => {
     if (!glyphsWithParts.length) return null;
 
-    const viewport = 260 * cardScale;
-    const padding = 34 * cardScale;
+    const viewport = 260;
+    const padding = 34;
 
     const renderedParts = [];
     let minX = Infinity;
@@ -249,7 +249,8 @@ export default function VisualDecoderLab() {
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
 
-    const scale = Math.min((viewport - padding * 2) / contentWidth, (viewport - padding * 2) / contentHeight);
+    const fitScale = Math.min((viewport - padding * 2) / contentWidth, (viewport - padding * 2) / contentHeight);
+    const scale = fitScale * cardScale;
 
     return {
       viewport,
