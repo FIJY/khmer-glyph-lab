@@ -25,6 +25,7 @@ export default function VisualDecoderLab() {
   const [greenStrokeMode, setGreenStrokeMode] = useState('all');
   const [autoFitMode, setAutoFitMode] = useState('contain');
   const [consonantOutlineMode, setConsonantOutlineMode] = useState('default');
+  const [consonantFillMode, setConsonantFillMode] = useState('default');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundStatus, setSoundStatus] = useState('');
   const [cardScale, setCardScale] = useState(1.25);
@@ -344,19 +345,34 @@ export default function VisualDecoderLab() {
     return false;
   };
 
+  const isConsonantLike = (part) => part.category === 'base_consonant' || part.category === 'subscript_consonant';
+
   const getPartStrokeColor = (part, isSelected) => {
     if (isSelected) return '#1d4ed8';
 
-    if (consonantOutlineMode === 'off' && (part.category === 'base_consonant' || part.category === 'subscript_consonant')) {
+    if (isConsonantLike(part) && consonantOutlineMode === 'off') {
       return 'transparent';
     }
 
-    if (consonantOutlineMode === 'green_red' && (part.category === 'base_consonant' || part.category === 'subscript_consonant')) {
+    if (isConsonantLike(part) && consonantOutlineMode === 'green_red') {
       return isGreenModeMatch(part.category) ? '#16a34a' : '#dc2626';
     }
 
-    const categoryStroke = getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
-    return categoryStroke;
+    return getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
+  };
+
+  const getPartFillColor = (part, isSelected) => {
+    if (isSelected) return '#3b82f6';
+
+    if (isConsonantLike(part) && consonantFillMode === 'off') {
+      return 'transparent';
+    }
+
+    if (isConsonantLike(part) && consonantFillMode === 'green_red') {
+      return isGreenModeMatch(part.category) ? '#86efac' : '#fca5a5';
+    }
+
+    return part.color;
   };
 
   return (
@@ -459,6 +475,20 @@ export default function VisualDecoderLab() {
           </label>
           <span style={{ fontSize: '12px', color: '#991b1b' }}>
             В режиме зелёный/красный выбранная категория зелёная, остальные согласные — красные
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fef3c7', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🪣 Заливка согласных:</span>
+            <select value={consonantFillMode} onChange={(e) => setConsonantFillMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
+              <option value="default">Стандартная</option>
+              <option value="off">Без заливки согласных</option>
+              <option value="green_red">Зелёный/красный (по выбранной категории)</option>
+            </select>
+          </label>
+          <span style={{ fontSize: '12px', color: '#92400e' }}>
+            Работает независимо от режима обводки
           </span>
         </div>
 
@@ -575,8 +605,8 @@ export default function VisualDecoderLab() {
                       d={part.pathData}
                       transform={partTransform}
                       clipPath={isClipValid ? `url(#${clipId})` : undefined}
-                      fill={isSelectedInCard ? '#3b82f6' : part.color}
-                      stroke={isSelectedInCard ? '#f8fafc' : '#93c5fd'}
+                      fill={getPartFillColor(part, isSelectedInCard)}
+                      stroke={getPartStrokeColor(part, isSelectedInCard)}
                       strokeWidth={isSelectedInCard ? '28' : '16'}
                       style={{ cursor: 'pointer' }}
                       onClick={() => {
@@ -656,7 +686,7 @@ export default function VisualDecoderLab() {
                   >
                     <path
                       d={pathData}
-                      fill={isSelected ? '#3b82f6' : part.color}
+                      fill={getPartFillColor(part, isSelected)}
                       transform={`matrix(${SCALE}, 0, 0, ${SCALE}, ${xPos}, ${yPos})`}
                       clipPath={isClipValid ? `url(#${clipId})` : undefined}
                       stroke={strokeColor}
