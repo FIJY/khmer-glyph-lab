@@ -194,6 +194,70 @@ export default function VisualDecoderLab() {
     };
   }, [glyphsWithParts]);
 
+  const heroPartsPreview = useMemo(() => {
+    if (!glyphsWithParts.length) return null;
+
+    const viewport = 260;
+    const padding = 34;
+
+    const renderedParts = [];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const glyph of glyphsWithParts) {
+      for (const part of glyph.parts || []) {
+        const source = part.component || glyph;
+        const pathData = part.component ? part.component.d : (part.pathData || glyph.d);
+        const bb = source?.bb;
+        if (!pathData || !bb) continue;
+
+        const sourceX = source?.x || 0;
+        const sourceY = source?.y || 0;
+
+        const x1 = sourceX + (bb.x1 || 0);
+        const y1 = sourceY + (bb.y1 || 0);
+        const x2 = sourceX + (bb.x2 || 0);
+        const y2 = sourceY + (bb.y2 || 0);
+
+        minX = Math.min(minX, x1, x2);
+        minY = Math.min(minY, y1, y2);
+        maxX = Math.max(maxX, x1, x2);
+        maxY = Math.max(maxY, y1, y2);
+
+        renderedParts.push({
+          glyphId: glyph.id,
+          partId: part.partId,
+          char: part.char,
+          color: part.color || '#7dd3fc',
+          pathData,
+          sourceX,
+          sourceY,
+          clipRect: part.clipRect,
+        });
+      }
+    }
+
+    if (!renderedParts.length || !Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return null;
+    }
+
+    const contentWidth = Math.max(1, maxX - minX);
+    const contentHeight = Math.max(1, maxY - minY);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    const scale = Math.min((viewport - padding * 2) / contentWidth, (viewport - padding * 2) / contentHeight);
+
+    return {
+      scale,
+      offsetX: viewport / 2 - centerX * scale,
+      offsetY: viewport / 2 - centerY * scale,
+      parts: renderedParts,
+    };
+  }, [glyphsWithParts]);
+
   return (
     <section>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
@@ -290,6 +354,90 @@ export default function VisualDecoderLab() {
           {soundStatus ? <span style={{ fontSize: '12px', color: '#5b21b6' }}>{soundStatus}</span> : null}
         </div>
       </div>
+
+      <section
+        style={{
+          marginBottom: 16,
+          padding: 20,
+          borderRadius: 24,
+          border: '1px solid #243356',
+          background: 'linear-gradient(180deg, #0b1530 0%, #040b1f 100%)',
+          color: '#dbeafe',
+        }}
+      >
+        <p style={{ margin: 0, letterSpacing: '0.22em', textAlign: 'center', color: '#7dd3fc' }}>TAP THE HERO.</p>
+        <h2 style={{ marginTop: 12, marginBottom: 18, textAlign: 'center', color: '#f8fafc' }}>Tap the BASE of the block.</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <span style={{ color: '#94a3b8', letterSpacing: '0.2em', fontSize: 13 }}>FOUND: {selectedChar ? '1/1' : '0/1'}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedGlyphId(null);
+              setSelectedChar(null);
+            }}
+            style={{
+              padding: '8px 18px',
+              borderRadius: 18,
+              border: '1px solid #334155',
+              background: '#111b33',
+              color: '#cbd5e1',
+              cursor: 'pointer',
+              letterSpacing: '0.08em',
+            }}
+          >
+            ↺ RESET
+          </button>
+        </div>
+
+        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center' }}>
+          {heroPartsPreview ? (
+            <svg width="260" height="260" viewBox="0 0 260 260" role="img" aria-label="Centered decoded glyph">
+              {heroPartsPreview.parts.map((part) => {
+                const isSelectedInCard = selectedGlyphId === part.glyphId && selectedChar === part.char;
+                const clipId = `hero-clip-${part.partId}`;
+                const cr = part.clipRect;
+                const isClipValid = cr &&
+                  Number.isFinite(cr.x) && Number.isFinite(cr.y) &&
+                  Number.isFinite(cr.width) && Number.isFinite(cr.height);
+
+                const partTransform = `matrix(${heroPartsPreview.scale}, 0, 0, ${heroPartsPreview.scale}, ${heroPartsPreview.offsetX + part.sourceX * heroPartsPreview.scale}, ${heroPartsPreview.offsetY + part.sourceY * heroPartsPreview.scale})`;
+
+                return (
+                  <g key={part.partId}>
+                    <defs>
+                      {isClipValid && (
+                        <clipPath id={clipId}>
+                          <rect x={cr.x} y={cr.y} width={cr.width} height={cr.height} />
+                        </clipPath>
+                      )}
+                    </defs>
+                    <path
+                      d={part.pathData}
+                      transform={partTransform}
+                      clipPath={isClipValid ? `url(#${clipId})` : undefined}
+                      fill={isSelectedInCard ? '#3b82f6' : part.color}
+                      stroke={isSelectedInCard ? '#f8fafc' : '#93c5fd'}
+                      strokeWidth={isSelectedInCard ? '28' : '16'}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => {
+                        setSelectedGlyphId(part.glyphId);
+                        setSelectedChar(part.char);
+                        playSelectedCharSound(part.char);
+                      }}
+                    />
+                  </g>
+                );
+              })}
+            </svg>
+          ) : (
+            <p style={{ color: '#64748b', letterSpacing: '0.2em', margin: 0 }}>SHAPE A GLYPH TO START</p>
+          )}
+        </div>
+
+        <p style={{ marginTop: 6, marginBottom: 0, textAlign: 'center', color: '#64748b', letterSpacing: '0.2em' }}>
+          TAP TO ANALYZE STRUCTURE
+        </p>
+      </section>
 
       {error ? <p style={{ color: "crimson", fontWeight: "bold" }}>{error}</p> : null}
 
