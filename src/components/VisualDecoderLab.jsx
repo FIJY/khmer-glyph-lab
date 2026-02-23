@@ -198,8 +198,8 @@ export default function VisualDecoderLab() {
   const heroPartsPreview = useMemo(() => {
     if (!glyphsWithParts.length) return null;
 
-    const viewport = 260 * cardScale;
-    const padding = 34 * cardScale;
+    const viewport = 260;
+    const padding = 34;
 
     const renderedParts = [];
     let minX = Infinity;
@@ -249,7 +249,8 @@ export default function VisualDecoderLab() {
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
 
-    const scale = Math.min((viewport - padding * 2) / contentWidth, (viewport - padding * 2) / contentHeight);
+    const fitScale = Math.min((viewport - padding * 2) / contentWidth, (viewport - padding * 2) / contentHeight);
+    const scale = fitScale * cardScale;
 
     return {
       viewport,
@@ -411,9 +412,16 @@ export default function VisualDecoderLab() {
           </button>
         </div>
 
-        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center' }}>
+        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center', overflow: 'visible' }}>
           {heroPartsPreview ? (
-            <svg width={heroPartsPreview.viewport} height={heroPartsPreview.viewport} viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`} role="img" aria-label="Centered decoded glyph">
+            <svg
+              width={heroPartsPreview.viewport}
+              height={heroPartsPreview.viewport}
+              viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`}
+              role="img"
+              aria-label="Centered decoded glyph"
+              style={{ overflow: 'visible' }}
+            >
               {heroPartsPreview.parts.map((part) => {
                 const isSelectedInCard = selectedGlyphId === part.glyphId && selectedChar === part.char;
                 const clipId = `hero-clip-${part.partId}`;
