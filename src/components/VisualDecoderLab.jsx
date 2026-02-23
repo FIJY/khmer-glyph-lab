@@ -23,9 +23,12 @@ export default function VisualDecoderLab() {
   const [selectedFont, setSelectedFont] = useState('auto');
   const [metricsReady, setMetricsReady] = useState(false);
   const [greenStrokeMode, setGreenStrokeMode] = useState('all');
+  const [autoFitMode, setAutoFitMode] = useState('contain');
+  const [consonantOutlineMode, setConsonantOutlineMode] = useState('default');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundStatus, setSoundStatus] = useState('');
   const [cardScale, setCardScale] = useState(1.25);
+  const [autoMaxCardScale, setAutoMaxCardScale] = useState(true);
   const audioRef = useRef(null);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
@@ -198,8 +201,11 @@ export default function VisualDecoderLab() {
   const heroPartsPreview = useMemo(() => {
     if (!glyphsWithParts.length) return null;
 
-    const viewport = 260 * cardScale;
-    const padding = 34 * cardScale;
+    const viewport = 260;
+    const paddingX = 10;
+    const paddingY = 12;
+    const strokeSafetyUnits = 8;
+    const autoBoost = 1.12;
 
     const renderedParts = [];
     let minX = Infinity;
@@ -207,15 +213,72 @@ export default function VisualDecoderLab() {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    for (const glyph of glyphsWithParts) {
-      for (const part of glyph.parts || []) {
-        const source = part.component || glyph;
-        const pathData = part.component ? part.component.d : (part.pathData || glyph.d);
+    const lineBreakIndexes = [];
+    for (let i = 0; i < text.length; i += 1) {
+      if (text[i] === '\n') lineBreakIndexes.push(i);
+    }
+    const getLineIndex = (pos) => {
+      if (!Number.isInteger(pos)) return 0;
+      let line = 0;
+      for (const br of lineBreakIndexes) {
+        if (br < pos) line += 1;
+      }
+      return line;
+    };
+
+    const glyphEntries = glyphsWithParts.map((glyph) => ({
+      glyph,
+      lineIndex: getLineIndex(glyph?.clusterStart),
+    }));
+
+    const lineMetrics = new Map();
+    for (const entry of glyphEntries) {
+      const line = entry.lineIndex;
+      for (const part of entry.glyph.parts || []) {
+        const source = part.component || entry.glyph;
         const bb = source?.bb;
-        if (!pathData || !bb) continue;
+        if (!bb) continue;
 
         const sourceX = source?.x || 0;
         const sourceY = source?.y || 0;
+        const x1 = sourceX + (bb.x1 || 0);
+        const y1 = sourceY + (bb.y1 || 0);
+        const x2 = sourceX + (bb.x2 || 0);
+        const y2 = sourceY + (bb.y2 || 0);
+
+        const prev = lineMetrics.get(line) || { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+        prev.minX = Math.min(prev.minX, x1, x2);
+        prev.minY = Math.min(prev.minY, y1, y2);
+        prev.maxX = Math.max(prev.maxX, x1, x2);
+        prev.maxY = Math.max(prev.maxY, y1, y2);
+        lineMetrics.set(line, prev);
+      }
+    }
+
+    const lineShiftByIndex = new Map();
+    const sortedLines = [...lineMetrics.keys()].sort((a, b) => a - b);
+    let yCursor = 0;
+    const lineGapUnits = 120;
+    for (const line of sortedLines) {
+      const m = lineMetrics.get(line);
+      const lineHeight = Math.max(1, m.maxY - m.minY);
+      lineShiftByIndex.set(line, {
+        shiftX: -m.minX,
+        shiftY: yCursor - m.minY,
+      });
+      yCursor += lineHeight + lineGapUnits;
+    }
+
+    for (const entry of glyphEntries) {
+      const lineShift = lineShiftByIndex.get(entry.lineIndex) || { shiftX: 0, shiftY: 0 };
+      for (const part of entry.glyph.parts || []) {
+        const source = part.component || entry.glyph;
+        const pathData = part.component ? part.component.d : (part.pathData || entry.glyph.d);
+        const bb = source?.bb;
+        if (!pathData || !bb) continue;
+
+        const sourceX = (source?.x || 0) + lineShift.shiftX;
+        const sourceY = (source?.y || 0) + lineShift.shiftY;
 
         const x1 = sourceX + (bb.x1 || 0);
         const y1 = sourceY + (bb.y1 || 0);
@@ -228,7 +291,7 @@ export default function VisualDecoderLab() {
         maxY = Math.max(maxY, y1, y2);
 
         renderedParts.push({
-          glyphId: glyph.id,
+          glyphId: entry.glyph.id,
           partId: part.partId,
           char: part.char,
           color: part.color || '#7dd3fc',
@@ -246,10 +309,20 @@ export default function VisualDecoderLab() {
 
     const contentWidth = Math.max(1, maxX - minX);
     const contentHeight = Math.max(1, maxY - minY);
+    const effectiveWidth = contentWidth + strokeSafetyUnits;
+    const effectiveHeight = contentHeight + strokeSafetyUnits;
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
 
-    const scale = Math.min((viewport - padding * 2) / contentWidth, (viewport - padding * 2) / contentHeight);
+    const fitScaleX = (viewport - paddingX * 2) / effectiveWidth;
+    const fitScaleY = (viewport - paddingY * 2) / effectiveHeight;
+
+    // Auto mode is height-priority: keep glyphs as large as possible while
+    // preserving vertical fit. Long phrases may overflow horizontally (allowed
+    // by overflow: visible) instead of being aggressively shrunk by width-fit.
+    const containScale = Math.min(fitScaleX, fitScaleY);
+    const fitScale = autoMaxCardScale ? (autoFitMode === 'height_priority' ? fitScaleY : containScale) : containScale;
+    const scale = fitScale * (autoMaxCardScale ? autoBoost : cardScale);
 
     return {
       viewport,
@@ -258,17 +331,44 @@ export default function VisualDecoderLab() {
       offsetY: viewport / 2 - centerY * scale,
       parts: renderedParts,
     };
-  }, [glyphsWithParts, cardScale]);
+  }, [glyphsWithParts, cardScale, autoMaxCardScale, autoFitMode, text]);
+
+  const isGreenModeMatch = (category) => {
+    if (greenStrokeMode === 'all') return true;
+    if (greenStrokeMode === 'consonants') return category === 'base_consonant' || category === 'independent_vowel';
+    if (greenStrokeMode === 'subscripts') return category === 'subscript_consonant';
+    if (greenStrokeMode === 'vowels') return category === 'dependent_vowel';
+    if (greenStrokeMode === 'diacritics') return category === 'diacritic_sign' || category === 'diacritic';
+    if (greenStrokeMode === 'coeng') return category === 'coeng';
+    if (greenStrokeMode === 'numerals') return category === 'numeral';
+    return false;
+  };
+
+  const getPartStrokeColor = (part, isSelected) => {
+    if (isSelected) return '#1d4ed8';
+
+    if (consonantOutlineMode === 'off' && (part.category === 'base_consonant' || part.category === 'subscript_consonant')) {
+      return 'transparent';
+    }
+
+    if (consonantOutlineMode === 'green_red' && (part.category === 'base_consonant' || part.category === 'subscript_consonant')) {
+      return isGreenModeMatch(part.category) ? '#16a34a' : '#dc2626';
+    }
+
+    const categoryStroke = getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
+    return categoryStroke;
+  };
 
   return (
     <section>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 8 }}>
-          <input
+          <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            style={{ minWidth: 280, padding: "8px", fontSize: "16px" }}
-            placeholder="Введите кхмерский текст"
+            rows={2}
+            style={{ minWidth: 280, padding: "8px", fontSize: "16px", resize: 'vertical' }}
+            placeholder="Введите кхмерский текст (можно в несколько строк)"
           />
           <button type="button" onClick={handleShape} disabled={loading} style={{ padding: "8px 16px" }}>
             {loading ? "Shaping..." : "Shape"}
@@ -348,6 +448,20 @@ export default function VisualDecoderLab() {
           </span>
         </div>
 
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fee2e2', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🧩 Контур согласных:</span>
+            <select value={consonantOutlineMode} onChange={(e) => setConsonantOutlineMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
+              <option value="default">Стандартный (по категориям)</option>
+              <option value="off">Без подсветки согласных</option>
+              <option value="green_red">Зелёный/красный (по выбранной категории)</option>
+            </select>
+          </label>
+          <span style={{ fontSize: '12px', color: '#991b1b' }}>
+            В режиме зелёный/красный выбранная категория зелёная, остальные согласные — красные
+          </span>
+        </div>
+
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#f5f3ff', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
@@ -356,9 +470,25 @@ export default function VisualDecoderLab() {
           {soundStatus ? <span style={{ fontSize: '12px', color: '#5b21b6' }}>{soundStatus}</span> : null}
         </div>
 
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fff7ed', borderRadius: '4px' }}>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
-            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔎 Масштаб глифов в карточке:</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px', background: '#fff7ed', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={autoMaxCardScale} onChange={(e) => setAutoMaxCardScale(e.target.checked)} />
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>📏 Авто-максимум: слово всегда максимально крупно и без обрезки</span>
+          </label>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%', opacity: autoMaxCardScale ? 1 : 0.55 }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🧭 Режим авто-fit:</span>
+            <select
+              value={autoFitMode}
+              onChange={(e) => setAutoFitMode(e.target.value)}
+              disabled={!autoMaxCardScale}
+              style={{ padding: '6px', fontSize: '14px', minWidth: 210 }}
+            >
+              <option value="contain">Contain (не выезжает по бокам)</option>
+              <option value="height_priority">Height priority (макс. размер, может выйти по X)</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%', opacity: autoMaxCardScale ? 0.55 : 1 }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔎 Ручной множитель:</span>
             <input
               type="range"
               min={0.8}
@@ -366,6 +496,7 @@ export default function VisualDecoderLab() {
               step={0.05}
               value={cardScale}
               onChange={(e) => setCardScale(parseFloat(e.target.value))}
+              disabled={autoMaxCardScale}
               style={{ flex: 1 }}
             />
             <strong style={{ minWidth: 52, textAlign: 'right' }}>{cardScale.toFixed(2)}x</strong>
@@ -411,9 +542,16 @@ export default function VisualDecoderLab() {
           </button>
         </div>
 
-        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center' }}>
+        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center', overflow: 'visible' }}>
           {heroPartsPreview ? (
-            <svg width={heroPartsPreview.viewport} height={heroPartsPreview.viewport} viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`} role="img" aria-label="Centered decoded glyph">
+            <svg
+              width={heroPartsPreview.viewport}
+              height={heroPartsPreview.viewport}
+              viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`}
+              role="img"
+              aria-label="Centered decoded glyph"
+              style={{ overflow: 'visible' }}
+            >
               {heroPartsPreview.parts.map((part) => {
                 const isSelectedInCard = selectedGlyphId === part.glyphId && selectedChar === part.char;
                 const clipId = `hero-clip-${part.partId}`;
@@ -495,8 +633,7 @@ export default function VisualDecoderLab() {
 
               const clipId = `clip-${part.partId}`;
               const isSelected = selectedGlyphId === glyph.id && selectedChar === part.char;
-              const categoryStroke = getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
-              const strokeColor = isSelected ? '#1d4ed8' : categoryStroke;
+              const strokeColor = getPartStrokeColor(part, isSelected);
               const strokeWidth = isSelected ? '30' : '14';
 
               return (
