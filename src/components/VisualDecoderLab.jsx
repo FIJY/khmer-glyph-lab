@@ -211,15 +211,72 @@ export default function VisualDecoderLab() {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    for (const glyph of glyphsWithParts) {
-      for (const part of glyph.parts || []) {
-        const source = part.component || glyph;
-        const pathData = part.component ? part.component.d : (part.pathData || glyph.d);
+    const lineBreakIndexes = [];
+    for (let i = 0; i < text.length; i += 1) {
+      if (text[i] === '\n') lineBreakIndexes.push(i);
+    }
+    const getLineIndex = (pos) => {
+      if (!Number.isInteger(pos)) return 0;
+      let line = 0;
+      for (const br of lineBreakIndexes) {
+        if (br < pos) line += 1;
+      }
+      return line;
+    };
+
+    const glyphEntries = glyphsWithParts.map((glyph) => ({
+      glyph,
+      lineIndex: getLineIndex(glyph?.clusterStart),
+    }));
+
+    const lineMetrics = new Map();
+    for (const entry of glyphEntries) {
+      const line = entry.lineIndex;
+      for (const part of entry.glyph.parts || []) {
+        const source = part.component || entry.glyph;
         const bb = source?.bb;
-        if (!pathData || !bb) continue;
+        if (!bb) continue;
 
         const sourceX = source?.x || 0;
         const sourceY = source?.y || 0;
+        const x1 = sourceX + (bb.x1 || 0);
+        const y1 = sourceY + (bb.y1 || 0);
+        const x2 = sourceX + (bb.x2 || 0);
+        const y2 = sourceY + (bb.y2 || 0);
+
+        const prev = lineMetrics.get(line) || { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+        prev.minX = Math.min(prev.minX, x1, x2);
+        prev.minY = Math.min(prev.minY, y1, y2);
+        prev.maxX = Math.max(prev.maxX, x1, x2);
+        prev.maxY = Math.max(prev.maxY, y1, y2);
+        lineMetrics.set(line, prev);
+      }
+    }
+
+    const lineShiftByIndex = new Map();
+    const sortedLines = [...lineMetrics.keys()].sort((a, b) => a - b);
+    let yCursor = 0;
+    const lineGapUnits = 120;
+    for (const line of sortedLines) {
+      const m = lineMetrics.get(line);
+      const lineHeight = Math.max(1, m.maxY - m.minY);
+      lineShiftByIndex.set(line, {
+        shiftX: -m.minX,
+        shiftY: yCursor - m.minY,
+      });
+      yCursor += lineHeight + lineGapUnits;
+    }
+
+    for (const entry of glyphEntries) {
+      const lineShift = lineShiftByIndex.get(entry.lineIndex) || { shiftX: 0, shiftY: 0 };
+      for (const part of entry.glyph.parts || []) {
+        const source = part.component || entry.glyph;
+        const pathData = part.component ? part.component.d : (part.pathData || entry.glyph.d);
+        const bb = source?.bb;
+        if (!pathData || !bb) continue;
+
+        const sourceX = (source?.x || 0) + lineShift.shiftX;
+        const sourceY = (source?.y || 0) + lineShift.shiftY;
 
         const x1 = sourceX + (bb.x1 || 0);
         const y1 = sourceY + (bb.y1 || 0);
@@ -232,7 +289,7 @@ export default function VisualDecoderLab() {
         maxY = Math.max(maxY, y1, y2);
 
         renderedParts.push({
-          glyphId: glyph.id,
+          glyphId: entry.glyph.id,
           partId: part.partId,
           char: part.char,
           color: part.color || '#7dd3fc',
@@ -271,17 +328,18 @@ export default function VisualDecoderLab() {
       offsetY: viewport / 2 - centerY * scale,
       parts: renderedParts,
     };
-  }, [glyphsWithParts, cardScale, autoMaxCardScale]);
+  }, [glyphsWithParts, cardScale, autoMaxCardScale, text]);
 
   return (
     <section>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 8 }}>
-          <input
+          <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            style={{ minWidth: 280, padding: "8px", fontSize: "16px" }}
-            placeholder="Введите кхмерский текст"
+            rows={2}
+            style={{ minWidth: 280, padding: "8px", fontSize: "16px", resize: 'vertical' }}
+            placeholder="Введите кхмерский текст (можно в несколько строк)"
           />
           <button type="button" onClick={handleShape} disabled={loading} style={{ padding: "8px 16px" }}>
             {loading ? "Shaping..." : "Shape"}
