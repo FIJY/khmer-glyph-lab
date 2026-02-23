@@ -25,6 +25,7 @@ export default function VisualDecoderLab() {
   const [greenStrokeMode, setGreenStrokeMode] = useState('all');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundStatus, setSoundStatus] = useState('');
+  const [cardScale, setCardScale] = useState(1.25);
   const audioRef = useRef(null);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
@@ -197,8 +198,8 @@ export default function VisualDecoderLab() {
   const heroPartsPreview = useMemo(() => {
     if (!glyphsWithParts.length) return null;
 
-    const viewport = 260;
-    const padding = 34;
+    const viewport = 260 * cardScale;
+    const padding = 34 * cardScale;
 
     const renderedParts = [];
     let minX = Infinity;
@@ -251,12 +252,13 @@ export default function VisualDecoderLab() {
     const scale = Math.min((viewport - padding * 2) / contentWidth, (viewport - padding * 2) / contentHeight);
 
     return {
+      viewport,
       scale,
       offsetX: viewport / 2 - centerX * scale,
       offsetY: viewport / 2 - centerY * scale,
       parts: renderedParts,
     };
-  }, [glyphsWithParts]);
+  }, [glyphsWithParts, cardScale]);
 
   return (
     <section>
@@ -353,22 +355,41 @@ export default function VisualDecoderLab() {
           </label>
           {soundStatus ? <span style={{ fontSize: '12px', color: '#5b21b6' }}>{soundStatus}</span> : null}
         </div>
+
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fff7ed', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>📐 Общий масштаб карточки:</span>
+            <input
+              type="range"
+              min={0.8}
+              max={1.8}
+              step={0.05}
+              value={cardScale}
+              onChange={(e) => setCardScale(parseFloat(e.target.value))}
+              style={{ flex: 1 }}
+            />
+            <strong style={{ minWidth: 52, textAlign: 'right' }}>{cardScale.toFixed(2)}x</strong>
+          </label>
+        </div>
       </div>
 
       <section
         style={{
           marginBottom: 16,
-          padding: 20,
-          borderRadius: 24,
+          width: '100%',
+          maxWidth: 660 * cardScale,
+          marginInline: 'auto',
+          padding: 20 * cardScale,
+          borderRadius: 24 * cardScale,
           border: '1px solid #243356',
           background: 'linear-gradient(180deg, #0b1530 0%, #040b1f 100%)',
           color: '#dbeafe',
         }}
       >
-        <p style={{ margin: 0, letterSpacing: '0.22em', textAlign: 'center', color: '#7dd3fc' }}>TAP THE HERO.</p>
-        <h2 style={{ marginTop: 12, marginBottom: 18, textAlign: 'center', color: '#f8fafc' }}>Tap the BASE of the block.</h2>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <span style={{ color: '#94a3b8', letterSpacing: '0.2em', fontSize: 13 }}>FOUND: {selectedChar ? '1/1' : '0/1'}</span>
+        <p style={{ margin: 0, letterSpacing: '0.22em', fontSize: 14 * cardScale, textAlign: 'center', color: '#7dd3fc' }}>TAP THE HERO.</p>
+        <h2 style={{ marginTop: 12 * cardScale, marginBottom: 18 * cardScale, fontSize: 30 * cardScale, textAlign: 'center', color: '#f8fafc' }}>Tap the BASE of the block.</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 * cardScale }}>
+          <span style={{ color: '#94a3b8', letterSpacing: '0.2em', fontSize: 13 * cardScale }}>FOUND: {selectedChar ? '1/1' : '0/1'}</span>
           <button
             type="button"
             onClick={() => {
@@ -376,22 +397,23 @@ export default function VisualDecoderLab() {
               setSelectedChar(null);
             }}
             style={{
-              padding: '8px 18px',
-              borderRadius: 18,
+              padding: `${Math.round(8 * cardScale)}px ${Math.round(18 * cardScale)}px`,
+              borderRadius: 18 * cardScale,
               border: '1px solid #334155',
               background: '#111b33',
               color: '#cbd5e1',
               cursor: 'pointer',
               letterSpacing: '0.08em',
+              fontSize: 15 * cardScale,
             }}
           >
             ↺ RESET
           </button>
         </div>
 
-        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center' }}>
+        <div style={{ minHeight: 280 * cardScale, display: 'grid', placeItems: 'center' }}>
           {heroPartsPreview ? (
-            <svg width="260" height="260" viewBox="0 0 260 260" role="img" aria-label="Centered decoded glyph">
+            <svg width={heroPartsPreview.viewport} height={heroPartsPreview.viewport} viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`} role="img" aria-label="Centered decoded glyph">
               {heroPartsPreview.parts.map((part) => {
                 const isSelectedInCard = selectedGlyphId === part.glyphId && selectedChar === part.char;
                 const clipId = `hero-clip-${part.partId}`;
@@ -430,11 +452,11 @@ export default function VisualDecoderLab() {
               })}
             </svg>
           ) : (
-            <p style={{ color: '#64748b', letterSpacing: '0.2em', margin: 0 }}>SHAPE A GLYPH TO START</p>
+            <p style={{ color: '#64748b', letterSpacing: '0.2em', fontSize: 14 * cardScale, margin: 0 }}>SHAPE A GLYPH TO START</p>
           )}
         </div>
 
-        <p style={{ marginTop: 6, marginBottom: 0, textAlign: 'center', color: '#64748b', letterSpacing: '0.2em' }}>
+        <p style={{ marginTop: 6 * cardScale, marginBottom: 0, textAlign: 'center', color: '#64748b', letterSpacing: '0.2em', fontSize: 13 * cardScale }}>
           TAP TO ANALYZE STRUCTURE
         </p>
       </section>
