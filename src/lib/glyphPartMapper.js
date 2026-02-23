@@ -934,6 +934,8 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
       const rightVowelCp = rightVowelMeta.char?.codePointAt(0) ?? null;
       const baseConsonantCpForTail = baseMeta.char?.codePointAt(0) ?? null;
       const preferredTail = getDesiredTailWidthFromHeight(bbHeight, clusterHasSubscript, rightVowelCp, baseConsonantCpForTail);
+      const { baseClipWidth, tailWidth } = splitByDesiredTailWidth(bbWidth, preferredTail);
+      const compoundParts = [];
 
       // base — full width (both vowels sit around it)
       const bp = {
