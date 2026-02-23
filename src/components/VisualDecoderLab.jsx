@@ -194,10 +194,8 @@ export default function VisualDecoderLab() {
     };
   }, [glyphsWithParts]);
 
-  const heroGlyph = useMemo(() => glyphsWithParts[0] ?? null, [glyphsWithParts]);
-
   const heroPartsPreview = useMemo(() => {
-    if (!heroGlyph || !heroGlyph.parts?.length) return null;
+    if (!glyphsWithParts.length) return null;
 
     const viewport = 260;
     const padding = 34;
@@ -208,34 +206,37 @@ export default function VisualDecoderLab() {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    for (const part of heroGlyph.parts) {
-      const source = part.component || heroGlyph;
-      const pathData = part.component ? part.component.d : (part.pathData || heroGlyph.d);
-      const bb = source?.bb;
-      if (!pathData || !bb) continue;
+    for (const glyph of glyphsWithParts) {
+      for (const part of glyph.parts || []) {
+        const source = part.component || glyph;
+        const pathData = part.component ? part.component.d : (part.pathData || glyph.d);
+        const bb = source?.bb;
+        if (!pathData || !bb) continue;
 
-      const sourceX = source?.x || 0;
-      const sourceY = source?.y || 0;
+        const sourceX = source?.x || 0;
+        const sourceY = source?.y || 0;
 
-      const x1 = sourceX + (bb.x1 || 0);
-      const y1 = sourceY + (bb.y1 || 0);
-      const x2 = sourceX + (bb.x2 || 0);
-      const y2 = sourceY + (bb.y2 || 0);
+        const x1 = sourceX + (bb.x1 || 0);
+        const y1 = sourceY + (bb.y1 || 0);
+        const x2 = sourceX + (bb.x2 || 0);
+        const y2 = sourceY + (bb.y2 || 0);
 
-      minX = Math.min(minX, x1, x2);
-      minY = Math.min(minY, y1, y2);
-      maxX = Math.max(maxX, x1, x2);
-      maxY = Math.max(maxY, y1, y2);
+        minX = Math.min(minX, x1, x2);
+        minY = Math.min(minY, y1, y2);
+        maxX = Math.max(maxX, x1, x2);
+        maxY = Math.max(maxY, y1, y2);
 
-      renderedParts.push({
-        partId: part.partId,
-        char: part.char,
-        color: part.color || '#7dd3fc',
-        pathData,
-        sourceX,
-        sourceY,
-        clipRect: part.clipRect,
-      });
+        renderedParts.push({
+          glyphId: glyph.id,
+          partId: part.partId,
+          char: part.char,
+          color: part.color || '#7dd3fc',
+          pathData,
+          sourceX,
+          sourceY,
+          clipRect: part.clipRect,
+        });
+      }
     }
 
     if (!renderedParts.length || !Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
@@ -255,7 +256,7 @@ export default function VisualDecoderLab() {
       offsetY: viewport / 2 - centerY * scale,
       parts: renderedParts,
     };
-  }, [heroGlyph]);
+  }, [glyphsWithParts]);
 
   return (
     <section>
@@ -392,7 +393,7 @@ export default function VisualDecoderLab() {
           {heroPartsPreview ? (
             <svg width="260" height="260" viewBox="0 0 260 260" role="img" aria-label="Centered decoded glyph">
               {heroPartsPreview.parts.map((part) => {
-                const isSelectedInCard = selectedGlyphId === heroGlyph?.id && selectedChar === part.char;
+                const isSelectedInCard = selectedGlyphId === part.glyphId && selectedChar === part.char;
                 const clipId = `hero-clip-${part.partId}`;
                 const cr = part.clipRect;
                 const isClipValid = cr &&
@@ -419,8 +420,7 @@ export default function VisualDecoderLab() {
                       strokeWidth={isSelectedInCard ? '28' : '16'}
                       style={{ cursor: 'pointer' }}
                       onClick={() => {
-                        if (!heroGlyph) return;
-                        setSelectedGlyphId(heroGlyph.id);
+                        setSelectedGlyphId(part.glyphId);
                         setSelectedChar(part.char);
                         playSelectedCharSound(part.char);
                       }}
