@@ -6,41 +6,6 @@ import {
 } from './glyphCombinationRules.js';
 import { getConsonantBodyRect, getRawMetrics, getVowelMetrics } from './khmerConsonantMetrics.js';
 
-/**
- * v2 goals:
- * 1) Keep existing behavior for most glyphs.
- * 2) Fix narrow stacked cases (e.g. ខ្ញុំ) with strict guards.
- * 3) Avoid global regressions on level 1.
- * v3 change:
- * 4) All geometry splitting now anchors to the base consonant body,
- *    using metrics from khmerConsonantMetrics.js.
- *
- * v4 fixes:
- * 5) Filter ghost/UNKNOWN/empty parts.
- * 6) Normalize zones for component/direct parts to semantic zones.
- * 7) Auto-add clipRect from component.bb where possible.
- * 8) Stabilize coeng+subscript chains (e.g. ន្ត្រ) with deterministic non-base allocation.
- *
- * v5:
- * 9) Right-part splitting for dependent vowels (ា, ៅ, ោ) now uses a percentage
- *    of the base glyph's height. Default 35%, but reduced to 20% when a subscript
- *    consonant is present.
- *
- * v6 fix:
- * 10) When a base consonant and a subscript consonant belong to different glyphs
- *     (e.g. ញ + ្ញ), the base is now clipped to its body area so that it does not
- *     overlap the subscript. Uses cluster-wide detection of subscript consonants.
- *     Skip body clipping when base and subscript share the same hbGlyphId (e.g. ញ្ញ).
- *
- * v7 fixes:
- * 11) createNonBaseAllocator now sorts non-base components DESC by centerY so that
- *     chained coeng+subscript pairs (e.g. ន្ត្រ) are allocated in correct order.
- *     Added peek() method — coeng peeks without consuming a slot; subscript consumes.
- * 12) pickComponentForCategory: split coeng and subscript_consonant into separate
- *     branches — coeng uses peek(), subscript uses next().
- * 13) forceSplit now also triggers for LEFT-zone vowels (e.g. ើ in ណើ).
- * 14) isLeftSplitVowelCase: handle base+coeng+subscript+LEFT vowel clusters (e.g. ក្អែក).
- */
 
 const ENABLE_NARROW_STACKED_MODE = true;
 
@@ -57,8 +22,8 @@ const SUBSCRIPT_TAIL_HEIGHT_FACTOR = 0.20;
 // Format: { vowelCp: { baseConsonantCp: factor } }
 const VOWEL_TAIL_FACTOR_OVERRIDE = {
   0x17B6: { 0x1793: 0.38 }, // ា after ន → wider right tail
-  0x17C4: { 0x1793: 0.38 }, // ោ after ន → wider right tail
-  0x17C5: { 0x1793: 0.38 }, // ៅ after ន → wider right tail
+  0x17C4: { 0x1793: 0.4 }, // ោ after ន → wider right tail
+  0x17C5: { 0x1793: 0.4 }, // ៅ after ន → wider right tail
 };
 
 const SUBSCRIPT_CLAMP_FRACTION = 0.8;
@@ -969,10 +934,8 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
       const rightVowelCp = rightVowelMeta.char?.codePointAt(0) ?? null;
       const baseConsonantCpForTail = baseMeta.char?.codePointAt(0) ?? null;
       const preferredTail = getDesiredTailWidthFromHeight(bbHeight, clusterHasSubscript, rightVowelCp, baseConsonantCpForTail);
-      const { baseClipWidth, tailWidth } = splitByDesiredTailWidth(bbWidth, preferredTail);
 
       // base — full width (both vowels sit around it)
-      const compoundParts = [];
       const bp = {
         partId: `${glyph.id}-compound-base`,
         component: baseComponent,
