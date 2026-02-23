@@ -24,8 +24,8 @@ export default function VisualDecoderLab() {
   const [metricsReady, setMetricsReady] = useState(false);
   const [greenStrokeMode, setGreenStrokeMode] = useState('all');
   const [autoFitMode, setAutoFitMode] = useState('contain');
-  const [consonantOutlineMode, setConsonantOutlineMode] = useState('default');
-  const [consonantFillMode, setConsonantFillMode] = useState('default');
+  const [cardOutlineMode, setCardOutlineMode] = useState('default');
+  const [cardFillMode, setCardFillMode] = useState('multicolor');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundStatus, setSoundStatus] = useState('');
   const [cardScale, setCardScale] = useState(1.25);
@@ -345,16 +345,14 @@ export default function VisualDecoderLab() {
     return false;
   };
 
-  const isConsonantLike = (part) => part.category === 'base_consonant' || part.category === 'subscript_consonant';
-
   const getPartStrokeColor = (part, isSelected) => {
     if (isSelected) return '#1d4ed8';
 
-    if (isConsonantLike(part) && consonantOutlineMode === 'off') {
+    if (cardOutlineMode === 'off') {
       return 'transparent';
     }
 
-    if (isConsonantLike(part) && consonantOutlineMode === 'green_red') {
+    if (cardOutlineMode === 'green_red_filter') {
       return isGreenModeMatch(part.category) ? '#16a34a' : '#dc2626';
     }
 
@@ -364,12 +362,12 @@ export default function VisualDecoderLab() {
   const getPartFillColor = (part, isSelected) => {
     if (isSelected) return '#3b82f6';
 
-    if (isConsonantLike(part) && consonantFillMode === 'off') {
-      return 'transparent';
+    if (cardFillMode === 'mono') {
+      return '#7dd3fc';
     }
 
-    if (isConsonantLike(part) && consonantFillMode === 'green_red') {
-      return isGreenModeMatch(part.category) ? '#86efac' : '#fca5a5';
+    if (cardFillMode === 'filter_only') {
+      return isGreenModeMatch(part.category) ? part.color : 'transparent';
     }
 
     return part.color;
@@ -466,25 +464,25 @@ export default function VisualDecoderLab() {
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fee2e2', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🧩 Контур согласных:</span>
-            <select value={consonantOutlineMode} onChange={(e) => setConsonantOutlineMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🧩 Контур карточек:</span>
+            <select value={cardOutlineMode} onChange={(e) => setCardOutlineMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
               <option value="default">Стандартный (по категориям)</option>
-              <option value="off">Без подсветки согласных</option>
-              <option value="green_red">Зелёный/красный (по выбранной категории)</option>
+              <option value="green_red_filter">Зелёный/красный по выбранным категориям</option>
+              <option value="off">Без обводки</option>
             </select>
           </label>
           <span style={{ fontSize: '12px', color: '#991b1b' }}>
-            В режиме зелёный/красный выбранная категория зелёная, остальные согласные — красные
+            В режиме зелёный/красный: выбранные категории зелёные, остальные красные
           </span>
         </div>
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fef3c7', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🪣 Заливка согласных:</span>
-            <select value={consonantFillMode} onChange={(e) => setConsonantFillMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
-              <option value="default">Стандартная</option>
-              <option value="off">Без заливки согласных</option>
-              <option value="green_red">Зелёный/красный (по выбранной категории)</option>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🪣 Заливка карточек:</span>
+            <select value={cardFillMode} onChange={(e) => setCardFillMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
+              <option value="multicolor">Многоцветная (как раньше)</option>
+              <option value="mono">Одноцветная для невыбранных</option>
+              <option value="filter_only">Заливка только выбранных категорий</option>
             </select>
           </label>
           <span style={{ fontSize: '12px', color: '#92400e' }}>
