@@ -412,9 +412,16 @@ export default function VisualDecoderLab() {
           </button>
         </div>
 
-        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center' }}>
+        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center', overflow: 'visible' }}>
           {heroPartsPreview ? (
-            <svg width={heroPartsPreview.viewport} height={heroPartsPreview.viewport} viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`} role="img" aria-label="Centered decoded glyph">
+            <svg
+              width={heroPartsPreview.viewport}
+              height={heroPartsPreview.viewport}
+              viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`}
+              role="img"
+              aria-label="Centered decoded glyph"
+              style={{ overflow: 'visible' }}
+            >
               {heroPartsPreview.parts.map((part) => {
                 const isSelectedInCard = selectedGlyphId === part.glyphId && selectedChar === part.char;
                 const clipId = `hero-clip-${part.partId}`;
