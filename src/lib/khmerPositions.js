@@ -49,11 +49,6 @@ export const KHMER_DIACRITIC_POSITIONS = {
   0x17DD: ["top"],    // ៝
 };
 
-export function getSymbolPositions(codePoint) {
-  return KHMER_VOWEL_POSITIONS[codePoint]
-    || KHMER_DIACRITIC_POSITIONS[codePoint]
-    || [];
-}
 
 export const CATEGORY_COLORS = {
   base_consonant: "#22c55e",
