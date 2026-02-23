@@ -200,9 +200,10 @@ export default function VisualDecoderLab() {
     if (!glyphsWithParts.length) return null;
 
     const viewport = 260;
-    const paddingX = 18;
-    const paddingY = 22;
-    const strokeSafetyUnits = 36;
+    const paddingX = 10;
+    const paddingY = 12;
+    const strokeSafetyUnits = 8;
+    const autoBoost = 1.12;
 
     const renderedParts = [];
     let minX = Infinity;
@@ -257,7 +258,7 @@ export default function VisualDecoderLab() {
     const fitScaleX = (viewport - paddingX * 2) / effectiveWidth;
     const fitScaleY = (viewport - paddingY * 2) / effectiveHeight;
     const fitScale = Math.min(fitScaleX, fitScaleY);
-    const scale = fitScale * (autoMaxCardScale ? 1 : cardScale);
+    const scale = fitScale * (autoMaxCardScale ? autoBoost : cardScale);
 
     return {
       viewport,

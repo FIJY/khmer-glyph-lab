@@ -215,18 +215,11 @@ function componentToClipRect(component, category = null) {
   const { x1 = 0, y1 = 0, x2 = 0, y2 = 0 } = component.bb;
 
   if (category === 'subscript_consonant') {
-    // Expand on all 4 sides — the bb from HarfBuzz is often too tight for
-    // subscript forms which have decorative descenders and wide strokes.
-    // Horizontal: +40% of width per side; vertical: +30% per side.
-    const w = Math.max(0, x2 - x1);
-    const h = Math.max(0, y2 - y1);
-    const padX = Math.max(SUBSCRIPT_PAD_X_MIN, w * SUBSCRIPT_PAD_X_FRACTION);
-    const padY = Math.max(SUBSCRIPT_PAD_Y_MIN, h * SUBSCRIPT_PAD_Y_FRACTION);
     return {
-      x: x1 - padX,
-      y: y1 - padY,
-      width: w + padX * 2,
-      height: h + padY * 2,
+      x: x1,
+      y: y1,
+      width: Math.max(0, x2 - x1),
+      height: Math.max(0, y2 - y1),
     };
   }
 
@@ -684,7 +677,7 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
 
   console.log('[MAPPER] Relevant units:', relevantUnits.map((u) => ({ text: u.text, category: u.category })));
 
-  const charMeta = relevantUnits.map((unit, unitIdx) => ({
+  let charMeta = relevantUnits.map((unit, unitIdx) => ({
     char: unit.text,
     unitIdx,
     unit,
@@ -706,6 +699,36 @@ function getComponentBasedParts(glyph, units, enableSegmentation) {
   for (const m of charMeta) {
     m.category = m.unit.category;
   }
+
+  // Expand compact subscript units like "្ខ" into virtual coeng + subscript meta
+  // so legacy split logic can still emit split_coeng + split_subscript parts.
+  const expandedCharMeta = [];
+  for (const m of charMeta) {
+    const cps = m?.unit?.codePoints || [];
+    const isCompactSubscript = m.category === 'subscript_consonant' && cps.length >= 2 && cps[0] === COENG_CP;
+    if (!isCompactSubscript) {
+      expandedCharMeta.push(m);
+      continue;
+    }
+
+    const subCharFromText = Array.from(m.char || '')[1] || null;
+    const subChar = subCharFromText || String.fromCodePoint(cps[1]);
+
+    expandedCharMeta.push({
+      ...m,
+      char: '្',
+      category: 'coeng',
+      isVirtual: true,
+    });
+
+    expandedCharMeta.push({
+      ...m,
+      char: subChar,
+      category: 'subscript_consonant',
+      isVirtual: true,
+    });
+  }
+  charMeta = expandedCharMeta;
 
   // Fallback: if no units matched this glyph, render it as a single full part
   // to avoid returning 0 parts (fixes e.g. isolated vowel glyphs in ក្សោ)

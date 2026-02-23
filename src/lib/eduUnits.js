@@ -21,21 +21,14 @@ function splitTokenToAtoms(token, tokenStart = 0) {
 
     const isCoengMark = chCp === COENG_CP;
 
-    // Special case: coeng mark + consonant => coeng + subscript_consonant
+    // Special case: coeng mark + consonant => single subscript unit (e.g. "្ខ")
     if ((isCoengMark || category === 'coeng') && chars[i + 1] && isKhmerConsonantChar(chars[i + 1])) {
       const nextCh = chars[i + 1];
       units.push({
-        text: ch,
-        category: 'coeng',
-        codePoints: [COENG_CP],
-        sourceStart: tokenStart + localOffset,
-        sourceEnd: tokenStart + localOffset + ch.length,
-      });
-      units.push({
-        text: nextCh,
+        text: `${ch}${nextCh}`,
         category: 'subscript_consonant',
-        codePoints: [nextCh.codePointAt(0)],
-        sourceStart: tokenStart + localOffset + ch.length,
+        codePoints: [COENG_CP, nextCh.codePointAt(0)],
+        sourceStart: tokenStart + localOffset,
         sourceEnd: tokenStart + localOffset + ch.length + nextCh.length,
       });
       localOffset += ch.length + nextCh.length;
