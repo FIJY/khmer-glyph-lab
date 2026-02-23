@@ -23,6 +23,8 @@ export default function VisualDecoderLab() {
   const [selectedFont, setSelectedFont] = useState('auto');
   const [metricsReady, setMetricsReady] = useState(false);
   const [greenStrokeMode, setGreenStrokeMode] = useState('all');
+  const [autoFitMode, setAutoFitMode] = useState('contain');
+  const [consonantOutlineMode, setConsonantOutlineMode] = useState('default');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundStatus, setSoundStatus] = useState('');
   const [cardScale, setCardScale] = useState(1.25);
@@ -318,7 +320,8 @@ export default function VisualDecoderLab() {
     // Auto mode is height-priority: keep glyphs as large as possible while
     // preserving vertical fit. Long phrases may overflow horizontally (allowed
     // by overflow: visible) instead of being aggressively shrunk by width-fit.
-    const fitScale = autoMaxCardScale ? fitScaleY : Math.min(fitScaleX, fitScaleY);
+    const containScale = Math.min(fitScaleX, fitScaleY);
+    const fitScale = autoMaxCardScale ? (autoFitMode === 'height_priority' ? fitScaleY : containScale) : containScale;
     const scale = fitScale * (autoMaxCardScale ? autoBoost : cardScale);
 
     return {
@@ -328,7 +331,33 @@ export default function VisualDecoderLab() {
       offsetY: viewport / 2 - centerY * scale,
       parts: renderedParts,
     };
-  }, [glyphsWithParts, cardScale, autoMaxCardScale, text]);
+  }, [glyphsWithParts, cardScale, autoMaxCardScale, autoFitMode, text]);
+
+  const isGreenModeMatch = (category) => {
+    if (greenStrokeMode === 'all') return true;
+    if (greenStrokeMode === 'consonants') return category === 'base_consonant' || category === 'independent_vowel';
+    if (greenStrokeMode === 'subscripts') return category === 'subscript_consonant';
+    if (greenStrokeMode === 'vowels') return category === 'dependent_vowel';
+    if (greenStrokeMode === 'diacritics') return category === 'diacritic_sign' || category === 'diacritic';
+    if (greenStrokeMode === 'coeng') return category === 'coeng';
+    if (greenStrokeMode === 'numerals') return category === 'numeral';
+    return false;
+  };
+
+  const getPartStrokeColor = (part, isSelected) => {
+    if (isSelected) return '#1d4ed8';
+
+    if (consonantOutlineMode === 'off' && (part.category === 'base_consonant' || part.category === 'subscript_consonant')) {
+      return 'transparent';
+    }
+
+    if (consonantOutlineMode === 'green_red' && (part.category === 'base_consonant' || part.category === 'subscript_consonant')) {
+      return isGreenModeMatch(part.category) ? '#16a34a' : '#dc2626';
+    }
+
+    const categoryStroke = getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
+    return categoryStroke;
+  };
 
   return (
     <section>
@@ -419,6 +448,20 @@ export default function VisualDecoderLab() {
           </span>
         </div>
 
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fee2e2', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🧩 Контур согласных:</span>
+            <select value={consonantOutlineMode} onChange={(e) => setConsonantOutlineMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
+              <option value="default">Стандартный (по категориям)</option>
+              <option value="off">Без подсветки согласных</option>
+              <option value="green_red">Зелёный/красный (по выбранной категории)</option>
+            </select>
+          </label>
+          <span style={{ fontSize: '12px', color: '#991b1b' }}>
+            В режиме зелёный/красный выбранная категория зелёная, остальные согласные — красные
+          </span>
+        </div>
+
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#f5f3ff', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
@@ -431,6 +474,18 @@ export default function VisualDecoderLab() {
           <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input type="checkbox" checked={autoMaxCardScale} onChange={(e) => setAutoMaxCardScale(e.target.checked)} />
             <span style={{ fontSize: '14px', fontWeight: 'bold' }}>📏 Авто-максимум: слово всегда максимально крупно и без обрезки</span>
+          </label>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%', opacity: autoMaxCardScale ? 1 : 0.55 }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🧭 Режим авто-fit:</span>
+            <select
+              value={autoFitMode}
+              onChange={(e) => setAutoFitMode(e.target.value)}
+              disabled={!autoMaxCardScale}
+              style={{ padding: '6px', fontSize: '14px', minWidth: 210 }}
+            >
+              <option value="contain">Contain (не выезжает по бокам)</option>
+              <option value="height_priority">Height priority (макс. размер, может выйти по X)</option>
+            </select>
           </label>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%', opacity: autoMaxCardScale ? 0.55 : 1 }}>
             <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔎 Ручной множитель:</span>
@@ -578,8 +633,7 @@ export default function VisualDecoderLab() {
 
               const clipId = `clip-${part.partId}`;
               const isSelected = selectedGlyphId === glyph.id && selectedChar === part.char;
-              const categoryStroke = getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
-              const strokeColor = isSelected ? '#1d4ed8' : categoryStroke;
+              const strokeColor = getPartStrokeColor(part, isSelected);
               const strokeWidth = isSelected ? '30' : '14';
 
               return (
