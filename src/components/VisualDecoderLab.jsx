@@ -26,6 +26,7 @@ export default function VisualDecoderLab() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundStatus, setSoundStatus] = useState('');
   const [cardScale, setCardScale] = useState(1.25);
+  const [autoMaxCardScale, setAutoMaxCardScale] = useState(true);
   const audioRef = useRef(null);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
@@ -198,8 +199,10 @@ export default function VisualDecoderLab() {
   const heroPartsPreview = useMemo(() => {
     if (!glyphsWithParts.length) return null;
 
-    const viewport = 260 * cardScale;
-    const padding = 34 * cardScale;
+    const viewport = 260;
+    const paddingX = 18;
+    const paddingY = 22;
+    const strokeSafetyUnits = 36;
 
     const renderedParts = [];
     let minX = Infinity;
@@ -246,10 +249,15 @@ export default function VisualDecoderLab() {
 
     const contentWidth = Math.max(1, maxX - minX);
     const contentHeight = Math.max(1, maxY - minY);
+    const effectiveWidth = contentWidth + strokeSafetyUnits;
+    const effectiveHeight = contentHeight + strokeSafetyUnits;
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
 
-    const scale = Math.min((viewport - padding * 2) / contentWidth, (viewport - padding * 2) / contentHeight);
+    const fitScaleX = (viewport - paddingX * 2) / effectiveWidth;
+    const fitScaleY = (viewport - paddingY * 2) / effectiveHeight;
+    const fitScale = Math.min(fitScaleX, fitScaleY);
+    const scale = fitScale * (autoMaxCardScale ? 1 : cardScale);
 
     return {
       viewport,
@@ -258,7 +266,7 @@ export default function VisualDecoderLab() {
       offsetY: viewport / 2 - centerY * scale,
       parts: renderedParts,
     };
-  }, [glyphsWithParts, cardScale]);
+  }, [glyphsWithParts, cardScale, autoMaxCardScale]);
 
   return (
     <section>
@@ -356,9 +364,13 @@ export default function VisualDecoderLab() {
           {soundStatus ? <span style={{ fontSize: '12px', color: '#5b21b6' }}>{soundStatus}</span> : null}
         </div>
 
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fff7ed', borderRadius: '4px' }}>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
-            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔎 Масштаб глифов в карточке:</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px', background: '#fff7ed', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={autoMaxCardScale} onChange={(e) => setAutoMaxCardScale(e.target.checked)} />
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>📏 Авто-максимум: слово всегда максимально крупно и без обрезки</span>
+          </label>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%', opacity: autoMaxCardScale ? 0.55 : 1 }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔎 Ручной множитель:</span>
             <input
               type="range"
               min={0.8}
@@ -366,6 +378,7 @@ export default function VisualDecoderLab() {
               step={0.05}
               value={cardScale}
               onChange={(e) => setCardScale(parseFloat(e.target.value))}
+              disabled={autoMaxCardScale}
               style={{ flex: 1 }}
             />
             <strong style={{ minWidth: 52, textAlign: 'right' }}>{cardScale.toFixed(2)}x</strong>
@@ -411,9 +424,16 @@ export default function VisualDecoderLab() {
           </button>
         </div>
 
-        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center' }}>
+        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center', overflow: 'visible' }}>
           {heroPartsPreview ? (
-            <svg width={heroPartsPreview.viewport} height={heroPartsPreview.viewport} viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`} role="img" aria-label="Centered decoded glyph">
+            <svg
+              width={heroPartsPreview.viewport}
+              height={heroPartsPreview.viewport}
+              viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`}
+              role="img"
+              aria-label="Centered decoded glyph"
+              style={{ overflow: 'visible' }}
+            >
               {heroPartsPreview.parts.map((part) => {
                 const isSelectedInCard = selectedGlyphId === part.glyphId && selectedChar === part.char;
                 const clipId = `hero-clip-${part.partId}`;
