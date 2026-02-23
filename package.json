@@ -9,7 +9,8 @@
     "dev:server": "node server/server.cjs",
     "build": "node node_modules/vite/bin/vite.js build",
     "preview": "node node_modules/vite/bin/vite.js preview",
-    "test": "node --test"
+    "test": "node --test",
+    "start": "node server/server.cjs"
   },
   "dependencies": {
     "harfbuzzjs": "^0.8.0",
