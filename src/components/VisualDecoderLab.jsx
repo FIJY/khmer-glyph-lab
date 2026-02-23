@@ -196,29 +196,37 @@ export default function VisualDecoderLab() {
 
   const heroGlyph = useMemo(() => glyphsWithParts[0] ?? null, [glyphsWithParts]);
 
-  const heroPreview = useMemo(() => {
-    if (!heroGlyph || !heroGlyph.parts?.length) return null;
+  const heroPartsPreview = useMemo(() => {
+    if (!heroGlyph || !heroGlyph.parts?.length || !heroGlyph.bb) return null;
 
-    const firstPart = heroGlyph.parts[0];
-    const source = firstPart.component || heroGlyph;
-    const d = firstPart.component ? firstPart.component.d : (firstPart.pathData || heroGlyph.d);
-    const bb = source?.bb || heroGlyph.bb;
-
-    if (!d || !bb) return null;
-
-    const glyphWidth = Math.max(1, Math.abs((bb.x2 || 0) - (bb.x1 || 0)));
-    const glyphHeight = Math.max(1, Math.abs((bb.y2 || 0) - (bb.y1 || 0)));
-    const centerX = ((bb.x1 || 0) + (bb.x2 || 0)) / 2;
-    const centerY = ((bb.y1 || 0) + (bb.y2 || 0)) / 2;
+    const glyphWidth = Math.max(1, Math.abs((heroGlyph.bb.x2 || 0) - (heroGlyph.bb.x1 || 0)));
+    const glyphHeight = Math.max(1, Math.abs((heroGlyph.bb.y2 || 0) - (heroGlyph.bb.y1 || 0)));
+    const centerX = ((heroGlyph.bb.x1 || 0) + (heroGlyph.bb.x2 || 0)) / 2;
+    const centerY = ((heroGlyph.bb.y1 || 0) + (heroGlyph.bb.y2 || 0)) / 2;
 
     const viewport = 260;
     const padding = 34;
     const scale = Math.min((viewport - padding * 2) / glyphWidth, (viewport - padding * 2) / glyphHeight);
+    const transform = `matrix(${scale}, 0, 0, ${scale}, ${viewport / 2 - centerX * scale}, ${viewport / 2 - centerY * scale})`;
+
+    const parts = heroGlyph.parts
+      .map((part) => {
+        const pathData = part.component ? part.component.d : (part.pathData || heroGlyph.d);
+        if (!pathData) return null;
+        return {
+          partId: part.partId,
+          char: part.char,
+          color: part.color || '#7dd3fc',
+          pathData,
+        };
+      })
+      .filter(Boolean);
+
+    if (!parts.length) return null;
 
     return {
-      d,
-      fill: firstPart.color || '#7dd3fc',
-      transform: `matrix(${scale}, 0, 0, ${scale}, ${viewport / 2 - centerX * scale}, ${viewport / 2 - centerY * scale})`,
+      transform,
+      parts,
     };
   }, [heroGlyph]);
 
@@ -354,9 +362,28 @@ export default function VisualDecoderLab() {
         </div>
 
         <div style={{ minHeight: 280, display: 'grid', placeItems: 'center' }}>
-          {heroPreview ? (
+          {heroPartsPreview ? (
             <svg width="260" height="260" viewBox="0 0 260 260" role="img" aria-label="Centered decoded glyph">
-              <path d={heroPreview.d} transform={heroPreview.transform} fill={heroPreview.fill} stroke="#f8fafc" strokeWidth="24" />
+              {heroPartsPreview.parts.map((part) => {
+                const isSelectedInCard = selectedGlyphId === heroGlyph?.id && selectedChar === part.char;
+                return (
+                  <path
+                    key={part.partId}
+                    d={part.pathData}
+                    transform={heroPartsPreview.transform}
+                    fill={isSelectedInCard ? '#3b82f6' : part.color}
+                    stroke={isSelectedInCard ? '#f8fafc' : '#93c5fd'}
+                    strokeWidth={isSelectedInCard ? '28' : '16'}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      if (!heroGlyph) return;
+                      setSelectedGlyphId(heroGlyph.id);
+                      setSelectedChar(part.char);
+                      playSelectedCharSound(part.char);
+                    }}
+                  />
+                );
+              })}
             </svg>
           ) : (
             <p style={{ color: '#64748b', letterSpacing: '0.2em', margin: 0 }}>SHAPE A GLYPH TO START</p>
