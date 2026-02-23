@@ -1,3 +1,4 @@
+import React from 'react';
 import VisualDecoderLab from './components/VisualDecoderLab.jsx';
 
 export default function App() {
