@@ -194,6 +194,34 @@ export default function VisualDecoderLab() {
     };
   }, [glyphsWithParts]);
 
+  const heroGlyph = useMemo(() => glyphsWithParts[0] ?? null, [glyphsWithParts]);
+
+  const heroPreview = useMemo(() => {
+    if (!heroGlyph || !heroGlyph.parts?.length) return null;
+
+    const firstPart = heroGlyph.parts[0];
+    const source = firstPart.component || heroGlyph;
+    const d = firstPart.component ? firstPart.component.d : (firstPart.pathData || heroGlyph.d);
+    const bb = source?.bb || heroGlyph.bb;
+
+    if (!d || !bb) return null;
+
+    const glyphWidth = Math.max(1, Math.abs((bb.x2 || 0) - (bb.x1 || 0)));
+    const glyphHeight = Math.max(1, Math.abs((bb.y2 || 0) - (bb.y1 || 0)));
+    const centerX = ((bb.x1 || 0) + (bb.x2 || 0)) / 2;
+    const centerY = ((bb.y1 || 0) + (bb.y2 || 0)) / 2;
+
+    const viewport = 260;
+    const padding = 34;
+    const scale = Math.min((viewport - padding * 2) / glyphWidth, (viewport - padding * 2) / glyphHeight);
+
+    return {
+      d,
+      fill: firstPart.color || '#7dd3fc',
+      transform: `matrix(${scale}, 0, 0, ${scale}, ${viewport / 2 - centerX * scale}, ${viewport / 2 - centerY * scale})`,
+    };
+  }, [heroGlyph]);
+
   return (
     <section>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
@@ -290,6 +318,55 @@ export default function VisualDecoderLab() {
           {soundStatus ? <span style={{ fontSize: '12px', color: '#5b21b6' }}>{soundStatus}</span> : null}
         </div>
       </div>
+
+      <section
+        style={{
+          marginBottom: 16,
+          padding: 20,
+          borderRadius: 24,
+          border: '1px solid #243356',
+          background: 'linear-gradient(180deg, #0b1530 0%, #040b1f 100%)',
+          color: '#dbeafe',
+        }}
+      >
+        <p style={{ margin: 0, letterSpacing: '0.22em', textAlign: 'center', color: '#7dd3fc' }}>TAP THE HERO.</p>
+        <h2 style={{ marginTop: 12, marginBottom: 18, textAlign: 'center', color: '#f8fafc' }}>Tap the BASE of the block.</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <span style={{ color: '#94a3b8', letterSpacing: '0.2em', fontSize: 13 }}>FOUND: {selectedChar ? '1/1' : '0/1'}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedGlyphId(null);
+              setSelectedChar(null);
+            }}
+            style={{
+              padding: '8px 18px',
+              borderRadius: 18,
+              border: '1px solid #334155',
+              background: '#111b33',
+              color: '#cbd5e1',
+              cursor: 'pointer',
+              letterSpacing: '0.08em',
+            }}
+          >
+            ↺ RESET
+          </button>
+        </div>
+
+        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center' }}>
+          {heroPreview ? (
+            <svg width="260" height="260" viewBox="0 0 260 260" role="img" aria-label="Centered decoded glyph">
+              <path d={heroPreview.d} transform={heroPreview.transform} fill={heroPreview.fill} stroke="#f8fafc" strokeWidth="24" />
+            </svg>
+          ) : (
+            <p style={{ color: '#64748b', letterSpacing: '0.2em', margin: 0 }}>SHAPE A GLYPH TO START</p>
+          )}
+        </div>
+
+        <p style={{ marginTop: 6, marginBottom: 0, textAlign: 'center', color: '#64748b', letterSpacing: '0.2em' }}>
+          TAP TO ANALYZE STRUCTURE
+        </p>
+      </section>
 
       {error ? <p style={{ color: "crimson", fontWeight: "bold" }}>{error}</p> : null}
 
