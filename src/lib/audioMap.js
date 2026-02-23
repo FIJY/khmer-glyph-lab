@@ -1,5 +1,3 @@
-console.log('audioMap module loaded', new Date().toISOString());
-
 const U = (cp) => `U+${cp.toString(16).toUpperCase().padStart(4, '0')}.mp3`;
 
 function rangeMap(start, end, makeFile) {
