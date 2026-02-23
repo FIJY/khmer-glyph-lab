@@ -346,17 +346,18 @@ export default function VisualDecoderLab() {
   };
 
   const getPartStrokeColor = (part, isSelected) => {
-    if (isSelected) return '#1d4ed8';
-
+    let stroke;
     if (cardOutlineMode === 'off') {
-      return 'transparent';
+      stroke = 'transparent';
+    } else if (cardOutlineMode === 'green_red_filter') {
+      stroke = isGreenModeMatch(part.category) ? '#16a34a' : '#dc2626';
+    } else {
+      stroke = getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
     }
 
-    if (cardOutlineMode === 'green_red_filter') {
-      return isGreenModeMatch(part.category) ? '#16a34a' : '#dc2626';
-    }
-
-    return getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
+    // Keep active-selection feedback without forcing blue and breaking chosen mode.
+    if (isSelected && stroke === 'transparent') return '#1d4ed8';
+    return stroke;
   };
 
   const getPartFillColor = (part, isSelected) => {
