@@ -72,18 +72,39 @@ export function getColorForCategory(category, char) {
   return '#9ca3af'; // Серый
 }
 
-export function getStrokeForCategory(category, char) {
+export const GREEN_STROKE_MODES = {
+  all: 'all',
+  consonants: 'consonants',
+  vowels: 'vowels',
+  subscripts: 'subscripts',
+  numerals: 'numerals',
+  diacritics: 'diacritics',
+  coeng: 'coeng',
+};
+
+function isGreenModeMatch(category, mode) {
+  if (mode === GREEN_STROKE_MODES.all) return true;
+  if (mode === GREEN_STROKE_MODES.consonants) return category === 'base_consonant' || category === 'subscript_consonant';
+  if (mode === GREEN_STROKE_MODES.vowels) return category === 'dependent_vowel' || category === 'independent_vowel';
+  if (mode === GREEN_STROKE_MODES.subscripts) return category === 'subscript_consonant';
+  if (mode === GREEN_STROKE_MODES.numerals) return category === 'numeral';
+  if (mode === GREEN_STROKE_MODES.diacritics) return category === 'diacritic_sign' || category === 'diacritic';
+  if (mode === GREEN_STROKE_MODES.coeng) return category === 'coeng';
+  return false;
+}
+
+export function getStrokeForCategory(category, char, options = {}) {
+  const greenMode = options.greenMode || GREEN_STROKE_MODES.all;
+
+  if (isGreenModeMatch(category, greenMode)) return '#16a34a';
+
   if (category === 'base_consonant' || category === 'subscript_consonant') {
     const series = getKhmerConsonantSeries(char);
-    return series === 'a_series' ? '#16a34a' : '#dc2626';
+    return series === 'a_series' ? '#ea580c' : '#7c3aed';
   }
 
   if (category === 'dependent_vowel' || category === 'independent_vowel') {
     return '#dc2626';
-  }
-
-  if (category === 'diacritic_sign' || category === 'diacritic' || category === 'coeng' || category === 'numeral') {
-    return '#16a34a';
   }
 
   return '#6b7280';

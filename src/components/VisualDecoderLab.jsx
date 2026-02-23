@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { buildEduUnits } from "../lib/eduUnits.js";
 import { mapGlyphsToParts } from "../lib/glyphPartMapper.js";
 import { getStrokeForCategory } from "../lib/glyphCombinationRules.js";
 import { loadMetrics, isMetricsLoaded, getRawMetrics } from "../lib/khmerConsonantMetrics.js";
+import { getSoundFileForChar } from "../lib/audioMap.js";
 
 const DEBUG = Boolean(globalThis.window?.__EDU_DEBUG__);
 
@@ -21,6 +22,10 @@ export default function VisualDecoderLab() {
   const [fontOptions, setFontOptions] = useState([]);
   const [selectedFont, setSelectedFont] = useState('auto');
   const [metricsReady, setMetricsReady] = useState(false);
+  const [greenStrokeMode, setGreenStrokeMode] = useState('all');
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundStatus, setSoundStatus] = useState('');
+  const audioRef = useRef(null);
 
   const units = useMemo(() => buildEduUnits(text), [text]);
 
@@ -112,6 +117,29 @@ export default function VisualDecoderLab() {
     ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [didAutoload]);
+
+  function playSelectedCharSound(char) {
+    if (!soundEnabled || !char) return;
+
+    const soundFile = getSoundFileForChar(char);
+    if (!soundFile) {
+      setSoundStatus(`Нет файла для символа: ${char}`);
+      return;
+    }
+
+    const audio = audioRef.current ?? new Audio();
+    audioRef.current = audio;
+    audio.src = `/sounds/${soundFile}`;
+    audio.currentTime = 0;
+    audio.play()
+      .then(() => setSoundStatus(`▶️ ${soundFile}`))
+      .catch((playError) => {
+        console.warn('[audio] play failed', playError);
+        setSoundStatus(`Ошибка проигрывания: ${soundFile}`);
+      });
+  }
+
+  const selectedSoundFile = useMemo(() => getSoundFileForChar(selectedChar), [selectedChar]);
 
   const SCALE = 0.1;
 
@@ -235,6 +263,32 @@ export default function VisualDecoderLab() {
             Разделяет составные глифы на части по геометрии (если нет компонент от сервера)
           </span>
         </div>
+
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#ecfeff', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🟢 Зеленые контуры для:</span>
+            <select value={greenStrokeMode} onChange={(e) => setGreenStrokeMode(e.target.value)} style={{ padding: '6px', fontSize: '14px' }}>
+              <option value="all">Всех категорий</option>
+              <option value="consonants">Только согласных</option>
+              <option value="subscripts">Только подписных</option>
+              <option value="vowels">Только гласных</option>
+              <option value="diacritics">Только диакритик</option>
+              <option value="coeng">Только coeng</option>
+              <option value="numerals">Только цифр</option>
+            </select>
+          </label>
+          <span style={{ fontSize: '12px', color: '#0f766e' }}>
+            Невыбранные категории получают альтернативный контур по типу символа
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#f5f3ff', borderRadius: '4px' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔊 Проигрывать звук при клике по символу</span>
+          </label>
+          {soundStatus ? <span style={{ fontSize: '12px', color: '#5b21b6' }}>{soundStatus}</span> : null}
+        </div>
       </div>
 
       {error ? <p style={{ color: "crimson", fontWeight: "bold" }}>{error}</p> : null}
@@ -271,7 +325,7 @@ export default function VisualDecoderLab() {
 
               const clipId = `clip-${part.partId}`;
               const isSelected = selectedGlyphId === glyph.id && selectedChar === part.char;
-              const categoryStroke = getStrokeForCategory(part.category, part.char);
+              const categoryStroke = getStrokeForCategory(part.category, part.char, { greenMode: greenStrokeMode });
               const strokeColor = isSelected ? '#1d4ed8' : categoryStroke;
               const strokeWidth = isSelected ? '30' : '14';
 
@@ -288,6 +342,7 @@ export default function VisualDecoderLab() {
                     onClick={() => {
                       setSelectedGlyphId(glyph.id);
                       setSelectedChar(part.char);
+                      playSelectedCharSound(part.char);
                       console.log('[SELECTED CHAR]', part.char, 'in glyph', glyph.id);
                     }}
                     style={{ cursor: 'pointer' }}
@@ -341,6 +396,7 @@ export default function VisualDecoderLab() {
             return (
               <div style={{ marginTop: 8 }}>
                 <p><strong>Количество частей:</strong> {selectedParts.length}</p>
+                <p><strong>Аудио:</strong> {selectedSoundFile || 'нет соответствия'}</p>
                 {selectedParts.map((part, idx) => (
                   <div key={part.partId} style={{ marginTop: 8, paddingTop: 8, borderTop: idx > 0 ? '1px solid #ddd' : 'none' }}>
                     <p><strong>Часть #{idx + 1}:</strong></p>
