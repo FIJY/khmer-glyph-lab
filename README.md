@@ -25,6 +25,25 @@ npm run dev
 - Frontend: обычно http://localhost:5173 (если порт занят, Vite может выбрать 5174 и выше — смотрите URL в консоли)
 - Backend: http://localhost:3001
 
+## Деплой backend на Render
+
+Сервер **нужен**: frontend запрашивает `/api/fonts`, `/api/shape`, `/api/metrics`.
+
+В проект добавлен `render.yaml`, поэтому можно деплоить как Blueprint:
+
+1. Push репозиторий в GitHub.
+2. В Render: **New + → Blueprint** и выберите репозиторий.
+3. Render поднимет web service `khmer-glyph-lab-api`.
+4. Проверка после деплоя: `https://<your-service>.onrender.com/health`.
+
+Если деплоите вручную (без Blueprint), укажите:
+
+- Build command: `npm install`
+- Start command: `npm run start`
+- Health check path: `/health`
+
+> Важно: `PORT` на Render приходит через env; сервер уже использует `process.env.PORT`.
+
 ## Endpoints
 
 - `GET /health` → `OK`
