@@ -358,7 +358,7 @@ export default function VisualDecoderLab() {
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px', background: '#fff7ed', borderRadius: '4px' }}>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
-            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>📐 Общий масштаб карточки:</span>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>🔎 Масштаб глифов в карточке:</span>
             <input
               type="range"
               min={0.8}
@@ -377,19 +377,19 @@ export default function VisualDecoderLab() {
         style={{
           marginBottom: 16,
           width: '100%',
-          maxWidth: 660 * cardScale,
+          maxWidth: 660,
           marginInline: 'auto',
-          padding: 20 * cardScale,
-          borderRadius: 24 * cardScale,
+          padding: 20,
+          borderRadius: 24,
           border: '1px solid #243356',
           background: 'linear-gradient(180deg, #0b1530 0%, #040b1f 100%)',
           color: '#dbeafe',
         }}
       >
-        <p style={{ margin: 0, letterSpacing: '0.22em', fontSize: 14 * cardScale, textAlign: 'center', color: '#7dd3fc' }}>TAP THE HERO.</p>
-        <h2 style={{ marginTop: 12 * cardScale, marginBottom: 18 * cardScale, fontSize: 30 * cardScale, textAlign: 'center', color: '#f8fafc' }}>Tap the BASE of the block.</h2>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 * cardScale }}>
-          <span style={{ color: '#94a3b8', letterSpacing: '0.2em', fontSize: 13 * cardScale }}>FOUND: {selectedChar ? '1/1' : '0/1'}</span>
+        <p style={{ margin: 0, letterSpacing: '0.22em', textAlign: 'center', color: '#7dd3fc' }}>TAP THE HERO.</p>
+        <h2 style={{ marginTop: 12, marginBottom: 18, fontSize: 30, textAlign: 'center', color: '#f8fafc' }}>Tap the BASE of the block.</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <span style={{ color: '#94a3b8', letterSpacing: '0.2em', fontSize: 13 }}>FOUND: {selectedChar ? '1/1' : '0/1'}</span>
           <button
             type="button"
             onClick={() => {
@@ -397,21 +397,21 @@ export default function VisualDecoderLab() {
               setSelectedChar(null);
             }}
             style={{
-              padding: `${Math.round(8 * cardScale)}px ${Math.round(18 * cardScale)}px`,
-              borderRadius: 18 * cardScale,
+              padding: '8px 18px',
+              borderRadius: 18,
               border: '1px solid #334155',
               background: '#111b33',
               color: '#cbd5e1',
               cursor: 'pointer',
               letterSpacing: '0.08em',
-              fontSize: 15 * cardScale,
+              fontSize: 15,
             }}
           >
             ↺ RESET
           </button>
         </div>
 
-        <div style={{ minHeight: 280 * cardScale, display: 'grid', placeItems: 'center' }}>
+        <div style={{ minHeight: 280, display: 'grid', placeItems: 'center' }}>
           {heroPartsPreview ? (
             <svg width={heroPartsPreview.viewport} height={heroPartsPreview.viewport} viewBox={`0 0 ${heroPartsPreview.viewport} ${heroPartsPreview.viewport}`} role="img" aria-label="Centered decoded glyph">
               {heroPartsPreview.parts.map((part) => {
@@ -452,11 +452,11 @@ export default function VisualDecoderLab() {
               })}
             </svg>
           ) : (
-            <p style={{ color: '#64748b', letterSpacing: '0.2em', fontSize: 14 * cardScale, margin: 0 }}>SHAPE A GLYPH TO START</p>
+            <p style={{ color: '#64748b', letterSpacing: '0.2em', margin: 0 }}>SHAPE A GLYPH TO START</p>
           )}
         </div>
 
-        <p style={{ marginTop: 6 * cardScale, marginBottom: 0, textAlign: 'center', color: '#64748b', letterSpacing: '0.2em', fontSize: 13 * cardScale }}>
+        <p style={{ marginTop: 6, marginBottom: 0, textAlign: 'center', color: '#64748b', letterSpacing: '0.2em' }}>
           TAP TO ANALYZE STRUCTURE
         </p>
       </section>
