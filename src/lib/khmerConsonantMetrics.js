@@ -149,15 +149,6 @@ export function getConsonantBodyRectXYWH(bbox, consonantCP) {
   };
 }
 
-/**
- * Получить bbox подписной формы согласной.
- * Используется для точного позиционирования зоны BOTTOM при нарезке.
- *
- * @param {number} subscriptCP
- */
-export function getSubscriptBodyRect(subscriptCP) {
-  return getSubscriptData(subscriptCP);
-}
 
 /**
  * Получить данные о гласной: позицию, количество частей, delta.
@@ -166,15 +157,6 @@ export function getSubscriptBodyRect(subscriptCP) {
  */
 export function getVowelMetrics(vowelCP) {
   return getVowelData(vowelCP);
-}
-
-/**
- * Получить данные о диакритике.
- *
- * @param {number} diacriticCP
- */
-export function getDiacriticMetrics(diacriticCP) {
-  return getDiacriticData(diacriticCP);
 }
 
 /**
@@ -347,12 +329,6 @@ export function computeZonesFromMetrics(clusterBB, units) {
   return zones;
 }
 
-/**
- * Получить unitsPerEm загруженного шрифта.
- */
-export function getUnitsPerEm() {
-  return metricsData?.unitsPerEm ?? 1000;
-}
 
 /**
  * Получить полные сырые метрики (для debug panel).

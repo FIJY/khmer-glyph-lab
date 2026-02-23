@@ -107,30 +107,3 @@ export function buildEduUnits(text, charSplit) {
   return atoms.map((unit, index) => ({ ...unit, id: `edu-${index}` }));
 }
 
-function isUnitMatchGlyph(unit, glyph) {
-  const unitCodePoints = new Set(unit.codePoints);
-  const glyphCodePoints = glyph.codePoints || [];
-  const codePointHit = glyphCodePoints.some((cp) => unitCodePoints.has(cp));
-  const clusterTextHit = (glyph.clusterText || '').includes(unit.text);
-  return codePointHit || clusterTextHit;
-}
-
-export function mapEduUnitsToGlyphs(glyphs, units) {
-  const links = [];
-  const glyphHitCount = new Map();
-
-  units.forEach((unit) => {
-    glyphs.forEach((glyph) => {
-      if (isUnitMatchGlyph(unit, glyph)) {
-        const key = `${glyph.id}`;
-        glyphHitCount.set(key, (glyphHitCount.get(key) || 0) + 1);
-        links.push({ unitId: unit.id, glyphId: glyph.id, sharedGlyph: false, cluster: glyph.cluster });
-      }
-    });
-  });
-
-  return links.map((link) => ({
-    ...link,
-    sharedGlyph: (glyphHitCount.get(String(link.glyphId)) || 0) > 1
-  }));
-}

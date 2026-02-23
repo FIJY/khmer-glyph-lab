@@ -110,7 +110,3 @@ export function getStrokeForCategory(category, char, options = {}) {
   return '#6b7280';
 }
 
-export const BELOW_SPLIT_VOWELS = new Set([
-  0x17bb, // ុ
-  0x17bc, // ូ
-]);
